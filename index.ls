@@ -169,6 +169,7 @@ q = exports import
 	create: (type, data={}, redisOptions={}, next=->) ->
 		task = new Task {type, data, redisOptions}
 		task.save next
+		return task
 
 	listen: (port) ->
 		express = require 'express'

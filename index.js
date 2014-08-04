@@ -223,7 +223,8 @@ q = (exports.namespace = 'q', exports.key = function(it){
     data: data,
     redisOptions: redisOptions
   });
-  return task.save(next);
+  task.save(next);
+  return task;
 }, exports.listen = function(port){
   var express, app, bodyParser, router;
   express = require('express');
