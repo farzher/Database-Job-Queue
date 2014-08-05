@@ -2,46 +2,22 @@ redis = require 'redis'
 _ = require 'prelude-ls-extended'
 client = redis.createClient 16365, 'pub-redis-16365.us-east-1-3.1.ec2.garantiadata.com'
 
-# Convert nested object to redis hash object
-# obj2redis = ->
-# 	result = {}
-# 	for k, v of it
-# 		if _.isType 'Object', v
-# 			for k2, v2 of v
-# 				result["#k:#k2"] = v2
-# 		else
-# 			result[k] = v
-# 	return result
-# redis2obj = ->
-# 	result = {}
-# 	for k, v of it
-# 		if (k.indexOf ':') >= 0
-# 			keys = k.split ':'
-# 			result{}[keys.0][keys.1] = v
-# 		else
-# 			result[k] = v
-# 	return result
-obj2redis = ->
-	data = try JSON.stringify it.data catch => '{}'
-	it import {data}
-redis2obj = ->
-	data = try JSON.parse it.data catch => {}
-	# Things break if we don't ensure these aren't strings
-	it.attempts = parseInt it.attempts if it.attempts?
-	it.failedAttempts = parseInt it.failedAttempts if it.failedAttempts?
-	it.priority = parseInt it.priority if it.priority?
-	it.backoff = parseInt it.backoff if it.backoff?
-	it.delay = parseInt it.delay if it.delay?
-	it.insertedAt = parseInt it.insertedAt if it.insertedAt?
-	it import {data}
+# Things break if we don't ensure these aren't strings
+redisInts = <[attempts failedAttempts priority backoff delay insertedAt]>
+
 getTimestamp = -> Math.floor Date.now! / 1000
 
-
 class Task
-	({@id, @type, @data, @redisOptions}) ->
+	(@id, @redisOptions={}) ->
+		@data = @redisOptions.data
+		@type = @redisOptions.type
 		@process = q.processes[@type]
-		@options = {} import @process.options
-		@options import @redisOptions
+		@options = ({} import @process.options) import @redisOptions
+
+	toRedisHash: ->
+		result = {} import @redisOptions
+		result.data = try JSON.stringify @data catch => '{}'
+		return result
 
 	setState: (state, next=->) ->
 		m = client.multi!
@@ -79,10 +55,8 @@ class Task
 		err, @id <~ client.incr (q.key 'taskIncrementId')
 		return next err if err
 
-		hash = obj2redis {@type, @data} import @redisOptions
-
 		m = client.multi!
-		m.hmset (q.key "task:#{@id}"), hash
+		m.hmset (q.key "task:#{@id}"), @toRedisHash!
 		m.zadd (q.key "type:#{@type}"), @options.priority, @id
 		err, res <~ m.exec!
 		return next err if err
@@ -94,10 +68,7 @@ class Task
 		@process.pickupPendingTasks!
 
 	execute: ->
-		# Move task from pending to processing
 		err <~ @setState 'processing'
-
-		# Process task
 		@process.execute @
 
 	# After we're done, we look for new tasks to process
@@ -135,12 +106,7 @@ class Process
 		return @processingCount -= 1 if not id
 
 		# Get details for task
-		err, res <~ client.hgetall (q.key "task:#id")
-		obj = redis2obj res
-		data = obj.data
-		delete obj.data
-		redisOptions = obj
-		task = new Task {id, @type, data, redisOptions}
+		err, task <~ q.getTask id
 		task.state = 'pending'
 
 		# Process the task we found
@@ -167,10 +133,11 @@ q = exports import
 
 	# Used to create a task, and check to process it instantly
 	create: (type, data={}, redisOptions={}, next=->) ->
-		task = new Task {type, data, redisOptions}
+		task = new Task null, (redisOptions import {type, data})
 		task.save next
 		return task
 
+	# Called once to enable JSON api and dashboard
 	listen: (port) ->
 		express = require 'express'
 		app = express!
@@ -186,6 +153,16 @@ q = exports import
 		app.listen port
 		return {app, router}
 
+	getTask: (id, next) ->
+		err, res <- client.hgetall (q.key "task:#id")
+		return next err if err
+		return next 404 if not res
+
+		res.data = try JSON.parse res.data catch => {}
+		for name in redisInts => res[name] = parseInt res[name] if res[name]?
+
+		next null, (new Task id, res)
+
 # Initialize the database
 client.setnx (q.key 'taskIncrementId'), 0
 
@@ -197,20 +174,10 @@ setInterval ->
 	m.zremrangebyscore (q.key 'state:delayed'), 0, timestamp
 	err, res <~ m.exec!
 	ids = res.0
-	if not _.empty ids
-		m = client.multi!
-		for id in ids
-			m.hgetall (q.key "task:#id")
-		err, results <~ m.exec!
-		for res, i in results
-			id = ids[i]
-			obj = redis2obj res
-			data = obj.data
-			delete obj.data
-			redisOptions = obj
-			task = new Task {id, redisOptions.type, data, redisOptions}
-			task.state = 'delayed'
-			err <~ task.setState 'pending'
-			# TODO: this only needs to be called once for each process type
-			task.process.pickupPendingTasks!
+	for id in ids
+		err, task <- q.getTask id
+		task.state = 'delayed'
+		err <- task.setState 'pending'
+		# TODO: this only needs to be called once for each process type
+		task.process.pickupPendingTasks!
 , 5000
