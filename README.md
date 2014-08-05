@@ -6,4 +6,4 @@ This project is unfinished, do not use it.
 * Optional retries with backoff
 * RESTful JSON API
 * Asynchronous or synchronous processing
-* Batches
+* Batches (maybe)
