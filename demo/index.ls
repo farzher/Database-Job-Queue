@@ -1,15 +1,15 @@
-q = require '../index'
+q = require '../redis/index'
 async = require 'async'
 _ = require 'prelude-ls-extended'
 
-q.process 'test', {limit: 1, attempts: 3}, (task) ->
+q.queue 'test', {limit: 1, attempts: 3}, (job) ->
 	sendMail = (data, cb) -> setTimeout (-> cb (if data.subject is 'fail' => 'asked to fail')), 1000
 
-	data = task.data
+	data = job.data
 	console.log 'attempting to send email now'
 	err <- sendMail {data.subject, data.message}
 	console.log 'sendMail finished with err', err
-	task.done err
+	job.done err
 
 # q.create 'test', {subject: 'hey 1', message: 'sup'}, {priority: -1}
 # q.create 'test', {subject: 'hey 2', message: 'sup'}, {priority: -2, attempts: 1}
@@ -32,13 +32,13 @@ return
 
 
 # Example of processing a batch of requests
-q.process 'mx', (data, task) ->
-	task.log 'whatever'
-	task.done!
+q.queue 'mx', (data, job) ->
+	job.log 'whatever'
+	job.done!
 
 
 # Example of processing an entire batch as 1 request
-q.process 'mx', (data, task) ->
+q.queue 'mx', (data, job) ->
 	results = {}
 	for domain_id in data.domain_ids => results[domain_id] = {}
 
@@ -64,32 +64,32 @@ q.process 'mx', (data, task) ->
 	async.parallel functions, (err, res) ->
 		# TODO: update database metrics
 		console.log results
-		task.done!
+		job.done!
 
 # type, optional options, (process function | push url)
-q.process 'email', {limit: 1, attempts: 1, backoff: 0}, (data, task) ->
-	if iDontWantToSendNow => return task.delay 60
+q.queue 'email', {limit: 1, attempts: 1, backoff: 0}, (data, job) ->
+	if iDontWantToSendNow => return job.delay 60
 
-	task.log 'attempting to send email now'
+	job.log 'attempting to send email now'
 	success <- sendEmail {data.subject, data.message}
-	if not success => task.done 'failed to send email'
+	if not success => job.done 'failed to send email'
 
-	task.done!
+	job.done!
 
 # Push queue example, this acts like ironmq
-q.process 'email', 'http://mysite.com/webhook'
+q.queue 'email', 'http://mysite.com/webhook'
 
 # JSON API
 q.listen 1337
-# POST / task object or array of jobs
+# POST / job object or array of jobs
 # GET / dashboard ui
-# GET /:id task w/ meta data
+# GET /:id job w/ meta data
 # GET /type/:type
 # GET /type/:type/state/:state states are pending, processing, successful, failed, delayed
 # these are options for filtering GET requests ?from=0&limit=0
 
 # TODO: add exponental backoff type
-# task JSON
+# job JSON
 	# type: 'email'
 	# data:
 	# 	subject: 'hey'
@@ -99,16 +99,16 @@ q.listen 1337
 	# backoff: 60
 	# delay: 10 #-1 will never get picked up, batch jobs are put as -1 delay
 	# insertAt: timestamp
-	# parentId: jobId #onfinished, if this exists, add task id to parentId's finishedChildIds, if all are finished, mark parent as pending
-	# childIds: [task ids]
-	# finishedChildIds: [task ids]
+	# parentId: jobId #onfinished, if this exists, add job id to parentId's finishedChildIds, if all are finished, mark parent as pending
+	# childIds: [job ids]
+	# finishedChildIds: [job ids]
 	# progress: 0
 
 # DB structure
 	# q:jobIncrementId = 0
-	# q:task:1 = {}
-	# q:state:pending,processing,etc = [task ids]
-	# q:type:email = [task ids]
+	# q:job:1 = {}
+	# q:state:pending,processing,etc = [job ids]
+	# q:type:email = [job ids]
 
 
 

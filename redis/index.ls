@@ -7,12 +7,12 @@ redisInts = <[attempts failedAttempts priority backoff delay insertedAt]>
 
 getTimestamp = -> Math.floor Date.now! / 1000
 
-class Task
+class Job
 	(@id, @redisOptions={}) ->
 		@data = @redisOptions.data
 		@type = @redisOptions.type
-		@process = q.processes[@type]
-		@options = ({} import @process.options) import @redisOptions
+		@queue = q.queues[@type]
+		@options = ({} import @queue.options) import @redisOptions
 
 	toRedisHash: ->
 		result = {} import @redisOptions
@@ -28,7 +28,7 @@ class Task
 
 		if state is 'failed'
 			@redisOptions.failedAttempts = (@redisOptions.failedAttempts or 0) + 1
-			m.hset (q.key "task:#{@id}"), 'failedAttempts', @redisOptions.failedAttempts
+			m.hset (q.key "job:#{@id}"), 'failedAttempts', @redisOptions.failedAttempts
 			state = 'pending' if @redisOptions.failedAttempts < @options.attempts
 
 			# If we're trying to set it back to pending, first check backoff, maybe we need to delay it instead
@@ -52,11 +52,11 @@ class Task
 
 	save: (next) ->
 		@redisOptions.insertedAt = getTimestamp!
-		err, @id <~ client.incr (q.key 'taskIncrementId')
+		err, @id <~ client.incr (q.key 'jobIncrementId')
 		return next err if err
 
 		m = client.multi!
-		m.hmset (q.key "task:#{@id}"), @toRedisHash!
+		m.hmset (q.key "job:#{@id}"), @toRedisHash!
 		m.zadd (q.key "type:#{@type}"), @options.priority, @id
 		err, res <~ m.exec!
 		return next err if err
@@ -64,38 +64,38 @@ class Task
 		err <~ @setState 'pending'
 		next err; return if err
 
-		# After it's saved, pickup a task to process (probably this one)
-		@process.pickupPendingTasks!
+		# After it's saved, pickup a job to process (probably this one)
+		@queue.pickupPendingJobs!
 
-	execute: ->
+	process: ->
 		err <~ @setState 'processing'
-		@process.execute @
+		@queue.process @
 
-	# After we're done, we look for new tasks to process
+	# After we're done, we look for new jobs to process
 	done: (err=null) ->
-		@process.processingCount -= 1
+		@queue.processingCount -= 1
 
 		if not err
 			err <~ @setState 'successful'
-			@process.pickupPendingTasks!
+			@queue.pickupPendingJobs!
 		else
 			err <~ @setState 'failed'
-			@process.pickupPendingTasks!
+			@queue.pickupPendingJobs!
 
 
-class Process
+class Queue
 	(@type, @options=null, @cb=null) ->
 		@processingCount = 0
-		@pickupPendingTasks!
+		@pickupPendingJobs!
 
 	# TODO: Pickup is not atomic
-	pickupPendingTasks: ->
+	pickupPendingJobs: ->
 		# If we're over our limit, get out of here
 		if @options.limit > 0
 			return if @processingCount >= @options.limit
 		@processingCount += 1
 
-		# Get pending task
+		# Get pending job
 		m = client.multi!
 		m.zrange (q.key "state:pending:type:#{@type}"), 0, 0
 		m.zremrangebyrank (q.key "state:pending:type:#{@type}"), 0, 0
@@ -105,37 +105,37 @@ class Process
 		# We didn't find anything, get out of here
 		return @processingCount -= 1 if not id
 
-		# Get details for task
-		err, task <~ q.getTask id
-		task.state = 'pending'
+		# Get details for job
+		err, job <~ q.getJob id
+		job.state = 'pending'
 
-		# Process the task we found
-		task.execute!
+		# Process the job we found
+		job.process!
 
-		# Loop, looking for more tasks
-		@pickupPendingTasks!
+		# Loop, looking for more jobs
+		@pickupPendingJobs!
 
-	execute: (task) ->
-		@cb task
+	process: (job) ->
+		@cb job
 
 q = exports import
 	namespace: 'q'
 	key: -> "#{q.namespace}:#it"
-	processes: {}
+	queues: {}
 
-	# Used to define a function for processing tasks
-	process: (type, options=null, cb=null) ->
+	# Used to define a function for processing jobs
+	queue: (type, options=null, cb=null) ->
 		if not cb? => cb = options
 		if not _.isType 'Object', options => options = {}
 		options = {priority: 0, limit: 1, attempts: 1, backoff: 0, delay: 0} import options
 
-		q.processes[type] = new Process type, options, cb
+		q.queues[type] = new Queue type, options, cb
 
-	# Used to create a task, and check to process it instantly
+	# Used to create a job, and check to process it instantly
 	create: (type, data={}, redisOptions={}, next=->) ->
-		task = new Task null, (redisOptions import {type, data})
-		task.save next
-		return task
+		job = new Job null, (redisOptions import {type, data})
+		job.save next
+		return job
 
 	# Called once to enable JSON api and dashboard
 	listen: (port) ->
@@ -144,7 +144,7 @@ q = exports import
 		bodyParser = require 'body-parser'
 		app.use bodyParser.json!
 		router = express.Router!
-		router.post '/task', (req, res) ->
+		router.post '/job', (req, res) ->
 			obj = req.body
 			err <- q.create obj.type, obj.data, obj.options
 			res.status (if err => 500 else 200)
@@ -153,18 +153,18 @@ q = exports import
 		app.listen port
 		return {app, router}
 
-	getTask: (id, next) ->
-		err, res <- client.hgetall (q.key "task:#id")
+	getJob: (id, next) ->
+		err, res <- client.hgetall (q.key "job:#id")
 		return next err if err
 		return next 404 if not res
 
 		res.data = try JSON.parse res.data catch => {}
 		for name in redisInts => res[name] = parseInt res[name] if res[name]?
 
-		next null, (new Task id, res)
+		next null, (new Job id, res)
 
 # Initialize the database
-client.setnx (q.key 'taskIncrementId'), 0
+client.setnx (q.key 'jobIncrementId'), 0
 
 # Promote delayed jobs
 setInterval ->
@@ -175,9 +175,9 @@ setInterval ->
 	err, res <~ m.exec!
 	ids = res.0
 	for id in ids
-		err, task <- q.getTask id
-		task.state = 'delayed'
-		err <- task.setState 'pending'
-		# TODO: this only needs to be called once for each process type
-		task.process.pickupPendingTasks!
+		err, job <- q.getJob id
+		job.state = 'delayed'
+		err <- job.setState 'pending'
+		# TODO: this only needs to be called once for each queue type
+		job.queue.pickupPendingJobs!
 , 5000
