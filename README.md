@@ -1,25 +1,54 @@
-### Job Queue Experiments
+### Job Queue Experiment
 This project is unfinished, do not use it.
 
 ## Features
-* Delayed jobs
-* Optional retries with backoff
-* Job priority
-* RESTful JSON API (creating jobs, searching jobs)
-* Process jobs in node or use push queue webhooks to process jobs from another server
-* Rate limit jobs (only process 5 at a time, or only process 5 per minute)
-* Job monitoring (logging, progress, when finished you can check the result, or reason failed)
-* Batches (do something when all jobs in a batch are finished)
-* When being processed, a job can either: succeed, fail, die (ignore remaining attempts), or retry (don't count current attempt as failed)
-* TODO: cleanup hanging processing jobs
+* [x] Delayed jobs
+* [x] Optional retries
+	* [ ] with custom backoff
+* [x] Job priority
+* [ ] RESTful JSON API
+	* [x] creating jobs
+	* [ ] searching jobs
+	* [x] processing jobs
+* [x] Job data is kept, keep all your job history here and query it whenever
+* [ ] Processes jobs by
+	* [ ] node callbacks
+	* [x] using webhooks
+	* [ ] calling cli commands
+	* [ ] or polling
+* [ ] Web API lets you configure new queues without having to restart the server
+* [x] The default queue can be used for multiple things, by `switch`ing on an arbitrary type
+* [ ] Rate limit jobs
+	* [x] only process 5 at a time
+	* [ ] only process 5 per minute
+* [ ] Job monitoring (logging, progress, when finished you can check the result, or reason failed)
+* [ ] Batches????? (do something when all jobs in a batch are finished)
+* [x] When being processed, a job can either: succeed, fail, die (ignore remaining attempts), or retry (don't count current attempt as failed)
+* [x] cleanup hanging processing jobs
 
-## Redis Version
-* Incredibly fast
-* Job data is deleted after completion
+## Database
+job
+	type: 'email'
+	data:
+		subject: 'hey'
+		message: 'what up bro'
+	priority: 0
+	attempts: 3
+	backoff: 60
+	delay: 10
+	insertAt: timestamp
+	batchId:
+	progress: 0
+	logs: []
+	result: result or reason failed
+	state: queue,active,fail,success,delay
+	onComplete: job
+	onFail: job
+	onSuccess: job
+	childId: jobId
+	parentId: jobId
 
-## Mongo Version
-* Advanced job search API
-* Job data is kept, keep all your job history here and query it whenever
+batch
+	jobIds: []
+	onComplete: job
 
-## MySQL Version
-* Lol, I'm kidding.

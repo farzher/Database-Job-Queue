@@ -1,17 +1,20 @@
-q = require '../redis/index'
+q = require '../index'
 async = require 'async'
 _ = require 'prelude-ls-extended'
 
-q.queue 'test', {limit: 1, attempts: 3}, (job) ->
+<- q.init {connect: 'mongodb://farzher:testing@kahana.mongohq.com:10017/queue'}
+q.process 'test', {limit: 1, attempts: 3}, (job) ->
 	sendMail = (data, cb) -> setTimeout (-> cb (if data.subject is 'fail' => 'asked to fail')), 1000
 
 	data = job.data
-	console.log 'attempting to send email now'
+	job.log 'attempting to send email now'
 	err <- sendMail {data.subject, data.message}
-	console.log 'sendMail finished with err', err
+	job.log "sendMail finished with err #err"
 	job.done err
 
-# q.create 'test', {subject: 'hey 1', message: 'sup'}, {priority: -1}
+# q.process 'test', {limit: 2, attempts: 3}, 'http://requestb.in/1k5s0z71'
+
+q.create 'test', {subject: 'hey 1', message: 'sup'}, {priority: -1}
 # q.create 'test', {subject: 'hey 2', message: 'sup'}, {priority: -2, attempts: 1}
 q.listen 1337
 return
@@ -32,13 +35,13 @@ return
 
 
 # Example of processing a batch of requests
-q.queue 'mx', (data, job) ->
+q.process 'mx', (data, job) ->
 	job.log 'whatever'
 	job.done!
 
 
 # Example of processing an entire batch as 1 request
-q.queue 'mx', (data, job) ->
+q.process 'mx', (data, job) ->
 	results = {}
 	for domain_id in data.domain_ids => results[domain_id] = {}
 
@@ -67,7 +70,7 @@ q.queue 'mx', (data, job) ->
 		job.done!
 
 # type, optional options, (process function | push url)
-q.queue 'email', {limit: 1, attempts: 1, backoff: 0}, (data, job) ->
+q.process 'email', {limit: 1, attempts: 1, backoff: 0}, (data, job) ->
 	if iDontWantToSendNow => return job.delay 60
 
 	job.log 'attempting to send email now'
@@ -77,7 +80,7 @@ q.queue 'email', {limit: 1, attempts: 1, backoff: 0}, (data, job) ->
 	job.done!
 
 # Push queue example, this acts like ironmq
-q.queue 'email', 'http://mysite.com/webhook'
+q.process 'email', 'http://mysite.com/webhook'
 
 # JSON API
 q.listen 1337
