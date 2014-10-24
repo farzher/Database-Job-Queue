@@ -20,13 +20,17 @@ class Job
 
 		updateData = {}
 		if state is 'failed'
-			updateData.failedAttempts = (@option 'failedAttempts' or 0) + 1
-			state = 'pending' if updateData.failedAttempts < @option 'attempts'
-
-			# If we're trying to set it back to pending, first check backoff, maybe we need to delay it instead
-			if state is 'pending' and (@option 'backoff') > 0
-				state = 'delayed'
-				updateData.delayTil = Date.now! + (@option 'backoff') * 1000
+			updateData.failedAttempts = (@model.failedAttempts or 0) + 1
+			if (@option 'attempts') <= 0 or updateData.failedAttempts < @option 'attempts'
+				state = 'pending'
+				# First check backoff, maybe we need to delay it instead
+				backoff = @option 'backoff'
+				backoffType = typeof! backoff
+				if (backoffType is 'Number' and backoff > 0) or (backoffType is 'String')
+					state = 'delayed'
+					# For eval
+					attempt = updateData.failedAttempts; doc = @model
+					updateData.delayTil = Date.now! + (if backoffType is 'String' => eval backoff else backoff) * 1000
 
 		if state is 'killed' => state = 'failed'
 
@@ -53,7 +57,7 @@ Job.create = (model, next) !->
 	duration = model.duration or queues[model.type]?options?duration or 0
 	model.resetAt = Date.now! + duration * 1000
 	err, docs <-! collection.insert model
-	console.log 'inserted new job:', model
+	console.log 'inserted new job'
 	job = new Job docs.0
 	next err, job
 
@@ -68,16 +72,21 @@ class Queue
 	processPendingJobs: !->
 		console.log 'processingCount:', @type, @processingCount
 
-		# This runs even if we're over our queue's limit! In that case it's based on the job's overwritten limit
-		query = {type: @type, state: 'pending', $or: [{limit: {$gt: @processingCount}}, {limit: {$lt: 0}}]}
-		# If we're not over our queue's limit, also include any jobs with null limit
-		if @options.limit < 0 or @processingCount < @options.limit => query.$or.push {limit: null}
+		# If we're at queue limit, get out of here
+		return if @options.limit > 0 and @processingCount >= @options.limit
 		@processingCount += 1
 
+		# Rate limiting
+		# TODO: This isn't atomic, should be part of the find & modify
+		<~! (next) !~>
+			if @options.rateLimit > 0 and @options.rateInterval > 0
+				err, count <~! collection.find {lastProcessed: {$gte: Date.now! - @options.rateInterval * 1000}} .count
+				if count < @options.rateLimit => next! else return @processingCount -= 1
+			else next!
+
 		# Get pending job
-		err, doc <~! collection.findAndModify query, [['priority', 'desc']], {$set: {state: 'processing'}}, {new: true}
+		err, doc <~! collection.findAndModify {type: @type, state: 'pending'}, [['priority', 'desc']], {$set: {state: 'processing', lastProcessed: Date.now!}}, {new: true}
 		job = (if doc => new Job doc else null)
-		console.log 'found job:', job?
 
 		# We didn't find anything, get out of here
 		return @processingCount -= 1 if not job
@@ -108,7 +117,7 @@ updateConfig = !->
 	err, _config <-! db.collection 'config' .findOne
 	config := _config
 	if not config?
-		config := {queues: default: {priority: 0, limit: 1, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}}
+		config := {queues: default: {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}}
 		err, docs <-! db.collection 'config' .insert config
 
 	# Push config into queues, or update existing queues
@@ -144,17 +153,21 @@ do # Init
 	<-! collection.ensureIndex {priority: 1}
 	<-! collection.ensureIndex {delayTil: 1}
 	<-! collection.ensureIndex {resetAt: 1}
-	<-! collection.ensureIndex {limit: 1}
 
-	# Promote delayed jobs, reset hanging jobs
+	# Promote delayed jobs, reset hanging jobs, recheck rate limited queues
 	setInterval _, args.promoteInterval <| !->
+		processed = []
+		for , queue of queues when queue.options.rateLimit > 0 and queue.options.rateInterval > 0
+			processed.push queue.type
+			queue.processPendingJobs!
+
 		err, delayedDocs <-! collection.find {state: 'delayed', delayTil: {$lte: Date.now!}}, {_id: true, type: true} .toArray
 		err, hangingDocs <-! collection.find {state: 'processing', resetAt: {$lte: Date.now!}}, {_id: true, type: true} .toArray
 		docs = delayedDocs ++ hangingDocs
 		return if _.empty docs
 		_ids = _.map (._id), docs
 		err <-! collection.update {_id: $in: _ids}, {$set: {state: 'pending'}}, {multi: true}
-		for type in _.unique _.map (.type), docs => queues[type]?processPendingJobs!
+		for type in _.unique _.reject (in processed), _.map (.type), docs => queues[type]?processPendingJobs!
 
 do # Init JSON API
 	express = require 'express'

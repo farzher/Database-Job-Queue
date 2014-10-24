@@ -4,7 +4,7 @@ This project is unfinished, do not use it.
 ## Features
 * [x] Delayed jobs
 * [x] Optional retries
-	* [ ] with custom backoff
+	* [x] with custom backoff
 * [x] Job priority
 * [ ] RESTful JSON API
 	* [x] creating jobs
@@ -18,9 +18,9 @@ This project is unfinished, do not use it.
 	* [ ] or polling
 * [ ] Web API lets you configure new queues without having to restart the server
 * [x] The default queue can be used for multiple things, by `switch`ing on an arbitrary type
-* [ ] Rate limit jobs
+* [x] Rate limit jobs
 	* [x] only process 5 at a time
-	* [ ] only process 5 per minute
+	* [x] only process 5 per minute
 * [ ] Job monitoring (logging, progress, when finished you can check the result, or reason failed)
 * [ ] Batches????? (do something when all jobs in a batch are finished)
 * [x] When being processed, a job can either: succeed, fail, die (ignore remaining attempts), or retry (don't count current attempt as failed)
