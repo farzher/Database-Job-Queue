@@ -30,11 +30,31 @@ class Job
 					state = 'delayed'
 					# For eval
 					attempt = updateData.failedAttempts; doc = @model
-					updateData.delayTil = Date.now! + (if backoffType is 'String' => eval backoff else backoff) * 1000
+					if backoffType is 'String'
+						try eval backoff
+						catch e
+							# If eval fails, mark the request as killed
+							# TODO: log why it died e.message
+							backoffValue = 0
+							state = 'killed'
+					else backoffValue = backoff
+					updateData.delayTil = Date.now! + backoffValue * 1000
 
 		if state is 'killed' => state = 'failed'
 
 		err <~! @update updateData import {state}
+
+		# Check if batch has finished
+		<~! (next) !~>
+			if state in <[failed successful]> and @model.batchId
+				err, count <~! collection.find {batchId: @model.batchId, state: {$nin: <[failed successful]>}} .count
+				if count is 0
+					err, batch <~! db.collection 'batch' .findOne {_id: @model.batchId}
+					if batch.onComplete => createJob batch.onComplete, next
+					else next!
+				else next!
+			else next!
+
 		next err
 
 	done: (err=null) !->
@@ -123,14 +143,22 @@ updateConfig = !->
 	# Push config into queues, or update existing queues
 	for k, v of config.queues => if queues[k]? => that.updateConfig v else queues[k] = new Queue k, v
 
-# Used to create a job, and check to process it instantly
+# Used to create a job, or batch of jobs, and check to process it instantly
 createJob = (obj, next=!->) !->
-	err, job <-! Job.create obj
-	if job.model.state is 'pending' => job.queue?processPendingJobs!
-	next err
-
-# Used to create jobs in a batch
-createBatch = (arr, next=!->) !-> async.each arr, (!-> Job.create ...), next
+	isArray = _.isArray obj
+	if isArray or obj.jobs?
+		jobs = if isArray => obj else obj.jobs
+		onComplete = if isArray => null else obj.onComplete
+		return next 'Array is empty' if isArray and _.empty obj
+		err, docs <-! db.collection 'batch' .insert {onComplete}
+		batchId = docs.0._id
+		err <-! async.each jobs, (model, next) !-> Job.create model import {batchId}, next
+		for type in _.unique _.map (.type), jobs => queues[type]?processPendingJobs!
+		next err
+	else
+		err, job <-! Job.create obj
+		if job.model.state is 'pending' => job.queue?processPendingJobs!
+		next err
 
 do # Init
 	# TODO: use an actual command line library
@@ -175,16 +203,7 @@ do # Init JSON API
 	bodyParser = require 'body-parser'
 	app.use bodyParser.json!
 	router = express.Router!
-	router.all '/job', (req, res) !->
-		obj = req.body
-		if _.isArray obj
-			return (res.status 500; res.send 'Array is empty') if _.empty obj
-			err <-! createBatch obj
-			if not err => for type in _.unique _.map (.type), obj => queues[type]?processPendingJobs!
-			res.status (if err => 500 else 200); res.send err
-		else
-			err <-! createJob obj
-			res.status (if err => 500 else 200); res.send err
+	router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
 	router.all '/update-config', (req, res) !-> updateConfig!; res.send ''
 	app.use '/', router
 	app.listen args.port

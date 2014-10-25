@@ -22,33 +22,29 @@ This project is unfinished, do not use it.
 	* [x] only process 5 at a time
 	* [x] only process 5 per minute
 * [ ] Job monitoring (logging, progress, when finished you can check the result, or reason failed)
-* [ ] Batches????? (do something when all jobs in a batch are finished)
+* [x] Batches????? (do something when all jobs in a batch are finished)
 * [x] When being processed, a job can either: succeed, fail, die (ignore remaining attempts), or retry (don't count current attempt as failed)
 * [x] cleanup hanging processing jobs
 
 ## Database
-job
-	type: 'email'
-	data:
-		subject: 'hey'
-		message: 'what up bro'
-	priority: 0
-	attempts: 3
-	backoff: 60
-	delay: 10
-	insertAt: timestamp
-	batchId:
-	progress: 0
-	logs: []
-	result: result or reason failed
-	state: queue,active,fail,success,delay
-	onComplete: job
-	onFail: job
-	onSuccess: job
-	childId: jobId
-	parentId: jobId
+	job
+		type: 'email'
+		data:
+			subject: 'hey'
+			message: 'what up bro'
+		priority: 0
+		attempts: 3
+		backoff: 60
+		delay: 10
+		insertAt: timestamp
+		resetAt: timestamp
+		delayTil: timestamp
+		batchId: batch._id
+		progress: 0
+		logs: []
+		result: result or reason failed
+		state: pending,active,fail,success,delay
 
-batch
-	jobIds: []
-	onComplete: job
+	batch
+		onComplete: job
 
