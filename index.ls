@@ -1,10 +1,15 @@
 do # Require
 	mongodb = require 'mongodb'
 	MongoClient = mongodb.MongoClient
-	db = collection = config = null
 	_ = require 'prelude-ls-extended'
 	async = require 'async'
 	request = require 'request'
+	idkfile = try require './idkfile' catch => {}
+
+do # Globals
+	db = collection = config = null
+	defaultQueueSettings = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}
+	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str'}
 
 class Job
 	(@model={}) ->
@@ -57,16 +62,22 @@ class Job
 
 		next err
 
-	done: (err=null) !->
-		if not err?
-			err <~! @setState 'successful'
-			@queue.processPendingJobs!
-		else
-			err <~! @setState 'failed'
-			@queue.processPendingJobs!
+	success: (res) !->
+		# TODO: save this result in the db somewhere
+		console.log 'done success: ', res
+		err <~! @setState 'successful'
+		@queue.processPendingJobs!
+	error: (res) !->
+		# TODO: save this error in the db somewhere
+		console.log 'done error: ', res
+		err <~! @setState 'failed'
+		@queue.processPendingJobs!
 	retry: (next=!->) !-> @setState 'pending', next
 	kill: (next=!->) !-> @setState 'killed', next
 	log: (message, next=!->) !-> collection.update {_id: @model._id}, {$push: {logs: message}}, next
+
+	# This is only here to expose createJob to idkfile
+	create: createJob
 Job.create = (model, next) !->
 	model.type ?= 'default'
 	model.state = 'pending'
@@ -77,7 +88,7 @@ Job.create = (model, next) !->
 	duration = model.duration or queues[model.type]?options?duration or 0
 	model.resetAt = Date.now! + duration * 1000
 	err, docs <-! collection.insert model
-	console.log 'inserted new job'
+	console.log 'inserted new job to:', model.type
 	job = new Job docs.0
 	next err, job
 
@@ -118,16 +129,16 @@ class Queue
 		@processPendingJobs!
 
 	process: (job) !->
+		if idkfile[job.option 'type'] => return that job
+
 		console.log 'pushing job to:', job.option 'url'
 		err, res, body <-! request {url: (job.option 'url'), method: (job.option 'method'), json: job.model}
 		console.log 'Done!'
-		return job.done err if err
-		if res.statusCode is 200 => job.done null, body
+		return job.error err if err
+		if res.statusCode is 200 => job.success body
 		else if res.statusCode is 202 => job.retry!
 		else if res.statusCode is 403 => job.kill!
-		else
-			message = res.statusCode + (if body => ": #body" else '')
-			job.done message
+		else job.error res.statusCode + (if body => ": #body" else '')
 
 
 
@@ -137,7 +148,7 @@ updateConfig = !->
 	err, _config <-! db.collection 'config' .findOne
 	config := _config
 	if not config?
-		config := {queues: default: {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}}
+		config := {queues: default: defaultQueueSettings}
 		err, docs <-! db.collection 'config' .insert config
 
 	# Push config into queues, or update existing queues
@@ -145,17 +156,31 @@ updateConfig = !->
 
 # Used to create a job, or batch of jobs, and check to process it instantly
 createJob = (obj, next=!->) !->
+	validateJobErr = !->
+		return "Job must be an object" if typeof! it isnt 'Object'
+		for k, v of it
+			validation = jobValidation[k]
+			return "Unknown job key `#k`" if not validation?
+			switch validation
+			| 'int' => return "Key `#k` must be an int" if v isnt parseInt v
+			| '+int' => return "Key `#k` must be a positive int" if v isnt parseInt v or v <= 0
+			| 'str' => return "Key `#k` must be a str" if typeof! v isnt 'String'
+			| 'obj' => return "Key `#k` must be an obj" if typeof! v isnt 'Object'
+
 	isArray = _.isArray obj
 	if isArray or obj.jobs?
 		jobs = if isArray => obj else obj.jobs
 		onComplete = if isArray => null else obj.onComplete
-		return next 'Array is empty' if isArray and _.empty obj
+		return next 'Jobs must be an array' if typeof! jobs isnt 'Array'
+		return next 'Array of jobs is empty' if _.empty jobs
+		for job in jobs when validateJobErr job => return next that
 		err, docs <-! db.collection 'batch' .insert {onComplete}
 		batchId = docs.0._id
 		err <-! async.each jobs, (model, next) !-> Job.create model import {batchId}, next
 		for type in _.unique _.map (.type), jobs => queues[type]?processPendingJobs!
 		next err
 	else
+		if validateJobErr obj => return next that
 		err, job <-! Job.create obj
 		if job.model.state is 'pending' => job.queue?processPendingJobs!
 		next err
