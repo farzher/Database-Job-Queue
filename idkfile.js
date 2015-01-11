@@ -2,104 +2,120 @@
 var _, request;
 _ = require('prelude-ls-extended');
 request = require('request');
-exports['default'] = function(it){
-  switch (it.data.type) {
-  case 'mxDone':
-    if (_.chance(0.9)) {
-      request('http://localhost:5672/job', {
-        json: {
-          type: 'cf',
-          data: {
-            domainId: it.data.domainId
-          }
-        }
-      }, function(err, response){
-        it.done(err);
+exports['default'] = function(job){
+  var queries, jobs, res$, i$, len$, q, domains, domain;
+  switch (job.data.type) {
+  case 'log':
+    job.success(job.data.m);
+    break;
+  case 'progress':
+    console.log('progress time');
+    _.flipSetTimeout(1000, function(){
+      console.log('progress percent');
+      job.progress(10);
+      return _.flipSetTimeout(1000, function(){
+        job.progress(50);
+        return _.flipSetTimeout(1000, function(){
+          job.progress(75);
+          return _.flipSetTimeout(1000, function(){
+            return job.success();
+          });
+        });
       });
-    } else {
-      request('http://localhost:5672/job', {
-        json: {
-          data: {
-            type: 'done',
-            domainId: it.data.domainId
-          }
+    });
+    break;
+  case 'campaign':
+    queries = job.data.queries;
+    if (!queries) {
+      return job.kill('Invalid queries');
+    }
+    console.log('Inserting your request into the database');
+    if (_.chance(0.2)) {
+      return job.error('Things randomly crashed');
+    }
+    res$ = [];
+    for (i$ = 0, len$ = queries.length; i$ < len$; ++i$) {
+      q = queries[i$];
+      res$.push({
+        data: {
+          type: 'prospect',
+          q: q,
+          campaign_id: job.model._id
         }
-      }, function(err, response){
-        it.done(err);
       });
     }
+    jobs = res$;
+    job.success(null, {
+      onComplete: {
+        data: {
+          'type': 'log',
+          'm': "Campaign " + job.model._id + " complete"
+        }
+      },
+      jobs: jobs
+    });
     break;
-  case 'done':
-    console.log('Your entire campaign has finished for domainId:', it.data.domainId);
-  }
-};
-exports.campaign = function(it){
-  var domainId;
-  console.log('Inserting stuff into the database and doing things');
-  if (_.chance(0.2)) {
-    return it.error('Things randomly crashed');
-  }
-  domainId = it.data.domainId;
-  if (!domainId) {
-    return it.error('Invalid domainId');
-  }
-  it.create({
-    jobs: [
-      {
+  case 'prospect':
+    console.log("Making proxy request to google.com?q=" + job.data.q);
+    if (_.chance(0.2)) {
+      return job.error('No working proxy available');
+    }
+    domains = [_.rand(1000), _.rand(1000)];
+    if (_.chance(0.2)) {
+      return job.error('Inserting opps to mysql failed');
+    }
+    jobs = [];
+    for (i$ = 0, len$ = domains.length; i$ < len$; ++i$) {
+      domain = domains[i$];
+      jobs.push({
         type: 'mx1',
         data: {
-          domainId: domainId
+          domain: domain,
+          campaign_id: job.data.campaign_id
         }
-      }, {
+      });
+      jobs.push({
         type: 'mx2',
         data: {
-          domainId: domainId
+          domain: domain,
+          campaign_id: job.data.campaign_id
         }
-      }
-    ],
-    onComplete: {
-      data: {
-        type: 'mxDone',
-        domainId: domainId
-      }
+      });
+      jobs.push({
+        type: 'cf',
+        data: {
+          domain: domain,
+          campaign_id: job.data.campaign_id
+        }
+      });
     }
-  });
-  it.done(err);
+    job.success(domains, {
+      batchId: job.model.batchId,
+      jobs: jobs
+    });
+  }
 };
-exports.mx1 = function(it){
+exports.mx1 = function(job){
   var metric;
   if (_.chance(0.1)) {
-    return it.done('Getting metrics failed');
+    return job.error('Getting metrics failed');
   }
   metric = _.rand(10);
-  if (_.chance(0.1)) {
-    return it.done('Saving metrics failed');
-  }
-  it.done();
+  job.success(metric);
 };
-exports.mx2 = function(it){
+exports.mx2 = function(job){
   var metric;
   if (_.chance(0.1)) {
-    return it.done('Getting metrics failed');
+    return job.error('Getting metrics failed');
   }
   metric = _.rand(10);
-  if (_.chance(0.1)) {
-    return it.done('Saving metrics failed');
-  }
-  it.done();
+  job.success(metric);
 };
-exports.cf = function(it){
+exports.cf = function(job){
+  var contacts;
   if (_.chance(0.1)) {
-    return it.done('Finding contacts failed');
+    return job.error('Finding contacts failed');
   }
-  request('http://localhost:5672/job', {
-    json: {
-      data: {
-        type: 'done',
-        domainId: it.data.domainId
-      }
-    }
-  }, function(err, response){
-    it.done(err);
-  });
+  contacts = [_.rand(1000), _.rand(1000)];
+  job.success(contacts);
 };

@@ -9,7 +9,7 @@ do # Require
 do # Globals
 	db = collection = config = null
 	defaultQueueSettings = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}
-	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str'}
+	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str', batchId: '_id'}
 
 class Job
 	(@model={}) ->
@@ -48,33 +48,42 @@ class Job
 		if state is 'killed' => state = 'failed'
 
 		err <~! @update updateData import {state}
-
-		# Check if batch has finished
 		<~! (next) !~>
-			if state in <[failed successful]> and @model.batchId
-				err, count <~! collection.find {batchId: @model.batchId, state: {$nin: <[failed successful]>}} .count
-				if count is 0
-					err, batch <~! db.collection 'batch' .findOne {_id: @model.batchId}
-					if batch.onComplete => createJob batch.onComplete, next
-					else next!
-				else next!
+			if @model.batchId and state in <[failed successful]>
+				@checkBatchFinish next
 			else next!
-
 		next err
 
-	success: (res) !->
-		# TODO: save this result in the db somewhere
+	checkBatchFinish: (next=!->) !->
+		err, count <~! collection.find {batchId: @model.batchId, state: {$nin: <[failed successful]>}} .count
+		if count is 0
+			err, batch <~! db.collection 'batch' .findOne {_id: @model.batchId}
+			if batch.onComplete => createJob batch.onComplete, next
+			else next!
+		else next!
+	success: (res, job) !->
 		console.log 'done success: ', res
+		<~! (next) !~>
+			updateData = {}
+			if @model.progress? => updateData.progress = 100
+			if res? => updateData.result = res
+			if not _.Obj.empty updateData => @update updateData, next else next!
 		err <~! @setState 'successful'
+		<~! (next) !~>
+			if job => createJob job, next else next!
 		@queue.processPendingJobs!
 	error: (res) !->
-		# TODO: save this error in the db somewhere
-		console.log 'done error: ', res
+		@log "Error: #{res}"; console.log 'done error: ', res
 		err <~! @setState 'failed'
 		@queue.processPendingJobs!
-	retry: (next=!->) !-> @setState 'pending', next
-	kill: (next=!->) !-> @setState 'killed', next
-	log: (message, next=!->) !-> collection.update {_id: @model._id}, {$push: {logs: message}}, next
+	retry: (res) !->
+		@log 'Retry'; console.log 'done retry: ', res
+		@setState 'pending'
+	kill: (res) !->
+		@log 'Killed'; console.log 'done kill: ', res
+		@setState 'killed'
+	log: (message, next=!->) !-> collection.update {_id: @model._id}, {$push: {logs: {t:Date.now!, m:message}}}, next
+	progress: (progress, next=!->) !-> @update {progress}, next
 
 	# This is only here to expose createJob to idkfile
 	create: createJob
@@ -87,6 +96,7 @@ Job.create = (model, next) !->
 		model.delayTil = Date.now! + delay * 1000
 	duration = model.duration or queues[model.type]?options?duration or 0
 	model.resetAt = Date.now! + duration * 1000
+	console.log model
 	err, docs <-! collection.insert model
 	console.log 'inserted new job to:', model.type
 	job = new Job docs.0
@@ -166,16 +176,23 @@ createJob = (obj, next=!->) !->
 			| '+int' => return "Key `#k` must be a positive int" if v isnt parseInt v or v <= 0
 			| 'str' => return "Key `#k` must be a str" if typeof! v isnt 'String'
 			| 'obj' => return "Key `#k` must be an obj" if typeof! v isnt 'Object'
+			| '_id' => return "Key `#k` must be an ObjectId" if typeof! v isnt 'Object'
 
 	isArray = _.isArray obj
 	if isArray or obj.jobs?
 		jobs = if isArray => obj else obj.jobs
 		onComplete = if isArray => null else obj.onComplete
+		batchId = if isArray => null else obj.batchId
 		return next 'Jobs must be an array' if typeof! jobs isnt 'Array'
 		return next 'Array of jobs is empty' if _.empty jobs
 		for job in jobs when validateJobErr job => return next that
-		err, docs <-! db.collection 'batch' .insert {onComplete}
-		batchId = docs.0._id
+		# If there is no batchId assigned, then create one
+		<-! (next) !->
+			if not batchId
+				err, docs <-! db.collection 'batch' .insert {onComplete}
+				batchId := docs.0._id
+				next!
+			else next!
 		err <-! async.each jobs, (model, next) !-> Job.create model import {batchId}, next
 		for type in _.unique _.map (.type), jobs => queues[type]?processPendingJobs!
 		next err
@@ -228,6 +245,7 @@ do # Init JSON API
 	bodyParser = require 'body-parser'
 	app.use bodyParser.json!
 	router = express.Router!
+	router.all '/', (req, res) !-> res.send '//TODO: Single page UI that lets you see what jobs are currently running, and edit queue settings'
 	router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
 	router.all '/update-config', (req, res) !-> updateConfig!; res.send ''
 	app.use '/', router

@@ -35,7 +35,8 @@ jobValidation = {
   delay: 'int',
   duration: '+int',
   url: '',
-  method: 'str'
+  method: 'str',
+  batchId: '_id'
 };
 Job = (function(){
   Job.displayName = 'Job';
@@ -99,27 +100,8 @@ Job = (function(){
     }
     this.update((updateData.state = state, updateData), function(err){
       (function(next){
-        if ((state === 'failed' || state === 'successful') && this$.model.batchId) {
-          collection.find({
-            batchId: this$.model.batchId,
-            state: {
-              $nin: ['failed', 'successful']
-            }
-          }).count(function(err, count){
-            if (count === 0) {
-              db.collection('batch').findOne({
-                _id: this$.model.batchId
-              }, function(err, batch){
-                if (batch.onComplete) {
-                  createJob(batch.onComplete, next);
-                } else {
-                  next();
-                }
-              });
-            } else {
-              next();
-            }
-          });
+        if (this$.model.batchId && (state === 'failed' || state === 'successful')) {
+          this$.checkBatchFinish(next);
         } else {
           next();
         }
@@ -128,27 +110,78 @@ Job = (function(){
       });
     });
   };
-  prototype.success = function(res){
+  prototype.checkBatchFinish = function(next){
+    var this$ = this;
+    next == null && (next = function(){});
+    collection.find({
+      batchId: this.model.batchId,
+      state: {
+        $nin: ['failed', 'successful']
+      }
+    }).count(function(err, count){
+      if (count === 0) {
+        db.collection('batch').findOne({
+          _id: this$.model.batchId
+        }, function(err, batch){
+          if (batch.onComplete) {
+            createJob(batch.onComplete, next);
+          } else {
+            next();
+          }
+        });
+      } else {
+        next();
+      }
+    });
+  };
+  prototype.success = function(res, job){
     var this$ = this;
     console.log('done success: ', res);
-    this.setState('successful', function(err){
-      this$.queue.processPendingJobs();
+    (function(next){
+      var updateData;
+      updateData = {};
+      if (this$.model.progress != null) {
+        updateData.progress = 100;
+      }
+      if (res != null) {
+        updateData.result = res;
+      }
+      if (!_.Obj.empty(updateData)) {
+        this$.update(updateData, next);
+      } else {
+        next();
+      }
+    })(function(){
+      this$.setState('successful', function(err){
+        (function(next){
+          if (job) {
+            createJob(job, next);
+          } else {
+            next();
+          }
+        })(function(){
+          this$.queue.processPendingJobs();
+        });
+      });
     });
   };
   prototype.error = function(res){
     var this$ = this;
+    this.log("Error: " + res);
     console.log('done error: ', res);
     this.setState('failed', function(err){
       this$.queue.processPendingJobs();
     });
   };
-  prototype.retry = function(next){
-    next == null && (next = function(){});
-    this.setState('pending', next);
+  prototype.retry = function(res){
+    this.log('Retry');
+    console.log('done retry: ', res);
+    this.setState('pending');
   };
-  prototype.kill = function(next){
-    next == null && (next = function(){});
-    this.setState('killed', next);
+  prototype.kill = function(res){
+    this.log('Killed');
+    console.log('done kill: ', res);
+    this.setState('killed');
   };
   prototype.log = function(message, next){
     next == null && (next = function(){});
@@ -156,8 +189,17 @@ Job = (function(){
       _id: this.model._id
     }, {
       $push: {
-        logs: message
+        logs: {
+          t: Date.now(),
+          m: message
+        }
       }
+    }, next);
+  };
+  prototype.progress = function(progress, next){
+    next == null && (next = function(){});
+    this.update({
+      progress: progress
     }, next);
   };
   prototype.create = createJob;
@@ -174,6 +216,7 @@ Job.create = function(model, next){
   }
   duration = model.duration || ((ref2$ = queues[model.type]) != null ? (ref3$ = ref2$.options) != null ? ref3$.duration : void 8 : void 8) || 0;
   model.resetAt = Date.now() + duration * 1000;
+  console.log(model);
   collection.insert(model, function(err, docs){
     var job;
     console.log('inserted new job to:', model.type);
@@ -290,7 +333,7 @@ updateConfig = function(){
   });
 };
 createJob = function(obj, next){
-  var validateJobErr, isArray, jobs, onComplete, i$, len$, job, that;
+  var validateJobErr, isArray, jobs, onComplete, batchId, i$, len$, job, that;
   next == null && (next = function(){});
   validateJobErr = function(it){
     var k, v, validation;
@@ -323,6 +366,11 @@ createJob = function(obj, next){
         if (toString$.call(v).slice(8, -1) !== 'Object') {
           return "Key `" + k + "` must be an obj";
         }
+        break;
+      case '_id':
+        if (toString$.call(v).slice(8, -1) !== 'Object') {
+          return "Key `" + k + "` must be an ObjectId";
+        }
       }
     }
   };
@@ -334,6 +382,9 @@ createJob = function(obj, next){
     onComplete = isArray
       ? null
       : obj.onComplete;
+    batchId = isArray
+      ? null
+      : obj.batchId;
     if (toString$.call(jobs).slice(8, -1) !== 'Array') {
       return next('Jobs must be an array');
     }
@@ -346,11 +397,18 @@ createJob = function(obj, next){
         return next(that);
       }
     }
-    db.collection('batch').insert({
-      onComplete: onComplete
-    }, function(err, docs){
-      var batchId;
-      batchId = docs[0]._id;
+    (function(next){
+      if (!batchId) {
+        db.collection('batch').insert({
+          onComplete: onComplete
+        }, function(err, docs){
+          batchId = docs[0]._id;
+          next();
+        });
+      } else {
+        next();
+      }
+    })(function(){
       async.each(jobs, function(model, next){
         Job.create((model.batchId = batchId, model), next);
       }, function(err){
@@ -483,6 +541,9 @@ app = express();
 bodyParser = require('body-parser');
 app.use(bodyParser.json());
 router = express.Router();
+router.all('/', function(req, res){
+  res.send('//TODO: Single page UI that lets you see what jobs are currently running, and edit queue settings');
+});
 router.all('/job', function(req, res){
   createJob(req.body, function(err){
     res.status(err ? 500 : 200);
