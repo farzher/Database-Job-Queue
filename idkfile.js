@@ -3,8 +3,48 @@ var _, request;
 _ = require('prelude-ls-extended');
 request = require('request');
 exports['default'] = function(job){
-  var queries, jobs, res$, i$, len$, q, domains, domain;
+  var jobs, res$, i$, ref$, len$, keyword, sites, queries, q, domains, domain;
   switch (job.data.type) {
+  case 'getSitesFromKeywords':
+    res$ = [];
+    for (i$ = 0, len$ = (ref$ = job.data.keywords).length; i$ < len$; ++i$) {
+      keyword = ref$[i$];
+      res$.push({
+        data: {
+          type: 'makeGoogleRequest',
+          keyword: keyword
+        }
+      });
+    }
+    jobs = res$;
+    job.success(null, {
+      onComplete: {
+        data: {
+          type: 'googleDone'
+        }
+      },
+      jobs: jobs
+    });
+    break;
+  case 'makeGoogleRequest':
+    keyword = job.data.keyword;
+    if (_.chance(0.25)) {
+      return job.error('Could not load google results, bad proxy');
+    }
+    sites = [keyword + "site1.com", keyword + "site2.net", keyword + "site3.org"];
+    job.success(sites);
+    break;
+  case 'googleDone':
+    job.getBatchJobs(function(jobs){
+      var allSites;
+      allSites = [];
+      _.each(function(it){
+        return allSites = allSites.concat(it.model.result);
+      }, jobs);
+      allSites = _.unique(allSites);
+      return job.success(allSites);
+    });
+    break;
   case 'log':
     job.success(job.data.m);
     break;

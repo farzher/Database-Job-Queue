@@ -4,6 +4,27 @@ request = require 'request'
 exports import
 	default: (job) !->
 		switch job.data.type
+		| 'getSitesFromKeywords'
+			jobs = for keyword in job.data.keywords
+				{data: {type: 'makeGoogleRequest', keyword}}
+			job.success null, {onComplete: {data: {type: 'googleDone'}}, jobs}
+		| 'makeGoogleRequest'
+			keyword = job.data.keyword
+			# make google request to get sites from this keyword
+			# There's a 25% chance this fails
+			if _.chance 0.25 => return job.error 'Could not load google results, bad proxy'
+
+			sites = ["#{keyword}site1.com", "#{keyword}site2.net", "#{keyword}site3.org"]
+			job.success sites
+		| 'googleDone'
+			jobs <- job.getBatchJobs
+			allSites = []
+			_.each (-> allSites ++= it.model.result), jobs
+			allSites = _.unique allSites
+			job.success allSites
+
+
+
 		| 'log' => job.success job.data.m
 		| 'progress'
 			console.log 'progress time'

@@ -4,12 +4,13 @@ do # Require
 	_ = require 'prelude-ls-extended'
 	async = require 'async'
 	request = require 'request'
+	fs = require 'fs'
 	idkfile = try require './idkfile' catch => {}
 
 do # Globals
 	db = collection = config = null
 	defaultQueueSettings = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}
-	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str', batchId: '_id'}
+	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str', batchId: '_id', isOnComplete: 'bool'}
 
 class Job
 	(@model={}) ->
@@ -49,7 +50,7 @@ class Job
 
 		err <~! @update updateData import {state}
 		<~! (next) !~>
-			if @model.batchId and state in <[failed successful]>
+			if @model.batchId and not @model.isOnComplete and state in <[failed successful]>
 				@checkBatchFinish next
 			else next!
 		next err
@@ -57,8 +58,9 @@ class Job
 	checkBatchFinish: (next=!->) !->
 		err, count <~! collection.find {batchId: @model.batchId, state: {$nin: <[failed successful]>}} .count
 		if count is 0
-			err, batch <~! db.collection 'batch' .findOne {_id: @model.batchId}
-			if batch.onComplete => createJob batch.onComplete, next
+			err, batch <~! db.collection 'batch' .findAndModify {_id: @model.batchId}, {$set: {+isComplete}}, {+update}
+			if batch.onComplete and not batch.isComplete
+				createJob batch.onComplete import {batchId: batch._id, +isOnComplete}, next
 			else next!
 		else next!
 	success: (res, job) !->
@@ -87,6 +89,11 @@ class Job
 
 	# This is only here to expose createJob to idkfile
 	create: createJob
+	getBatchJobs: (next) !->
+		err, docs <~! collection.find {batchId: @model.batchId, isOnComplete: {$ne: true}} .toArray
+		if err => return @error err
+		jobs = for data in docs => new Job data
+		next jobs
 Job.create = (model, next) !->
 	model.type ?= 'default'
 	model.state = 'pending'
@@ -172,6 +179,7 @@ createJob = (obj, next=!->) !->
 			validation = jobValidation[k]
 			return "Unknown job key `#k`" if not validation?
 			switch validation
+			| 'bool' => return "Key `#k` must be an bool" if typeof! v isnt 'Boolean'
 			| 'int' => return "Key `#k` must be an int" if v isnt parseInt v
 			| '+int' => return "Key `#k` must be a positive int" if v isnt parseInt v or v <= 0
 			| 'str' => return "Key `#k` must be a str" if typeof! v isnt 'String'
@@ -209,6 +217,12 @@ do # Init
 		port: process.argv.3 or 5672
 		promoteInterval: 5000
 	queues = {}
+
+	# Watch idkfile
+	# TODO: This is buggy and gets called twice, I should replace it later
+	fs.watch './idkfile.js', !->
+		delete require.cache[require.resolve './idkfile.js']
+		idkfile := try require './idkfile.js' catch => {}
 
 	# DB
 	err, _db <-! MongoClient.connect args.connect

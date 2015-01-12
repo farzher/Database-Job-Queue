@@ -47,4 +47,5 @@ This project is unfinished, do not use it.
 
 	batch
 		onComplete: job
+		isComplete: false
 
