@@ -44,6 +44,7 @@ This project is unfinished, do not use it.
 		logs: []
 		result: result or reason failed
 		state: pending,active,fail,success,delay
+		onSuccessDelete: false
 
 	batch
 		onComplete: job

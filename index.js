@@ -25,7 +25,8 @@ defaultQueueSettings = {
   delay: 0,
   duration: 60 * 60,
   url: null,
-  method: 'POST'
+  method: 'POST',
+  onSuccessDelete: false
 };
 jobValidation = {
   data: 'obj',
@@ -38,7 +39,8 @@ jobValidation = {
   url: '',
   method: 'str',
   batchId: '_id',
-  isOnComplete: 'bool'
+  isOnComplete: 'bool',
+  onSuccessDelete: 'bool'
 };
 Job = (function(){
   Job.displayName = 'Job';
@@ -169,6 +171,9 @@ Job = (function(){
             next();
           }
         })(function(){
+          if (this$.option('onSuccessDelete')) {
+            this$['delete']();
+          }
           this$.queue.processPendingJobs();
         });
       });
@@ -191,6 +196,11 @@ Job = (function(){
     this.log('Killed');
     console.log('done kill: ', res);
     this.setState('killed');
+  };
+  prototype['delete'] = function(){
+    collection.remove({
+      _id: this.model._id
+    });
   };
   prototype.log = function(message, next){
     next == null && (next = function(){});

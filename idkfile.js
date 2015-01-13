@@ -28,7 +28,7 @@ exports['default'] = function(job){
     break;
   case 'makeGoogleRequest':
     keyword = job.data.keyword;
-    if (_.chance(0.25)) {
+    if (_.chance(0.9)) {
       return job.error('Could not load google results, bad proxy');
     }
     sites = [keyword + "site1.com", keyword + "site2.net", keyword + "site3.org"];

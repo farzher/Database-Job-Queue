@@ -9,8 +9,8 @@ do # Require
 
 do # Globals
 	db = collection = config = null
-	defaultQueueSettings = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST'}
-	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str', batchId: '_id', isOnComplete: 'bool'}
+	defaultQueueSettings = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST', onSuccessDelete: false}
+	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str', batchId: '_id', isOnComplete: 'bool', onSuccessDelete: 'bool'}
 
 class Job
 	(@model={}) ->
@@ -73,6 +73,7 @@ class Job
 		err <~! @setState 'successful'
 		<~! (next) !~>
 			if job => createJob job, next else next!
+		if @option 'onSuccessDelete' => @delete!
 		@queue.processPendingJobs!
 	error: (res) !->
 		@log "Error: #{res}"; console.log 'done error: ', res
@@ -84,6 +85,7 @@ class Job
 	kill: (res) !->
 		@log 'Killed'; console.log 'done kill: ', res
 		@setState 'killed'
+	delete: !-> collection.remove {_id: @model._id}
 	log: (message, next=!->) !-> collection.update {_id: @model._id}, {$push: {logs: {t:Date.now!, m:message}}}, next
 	progress: (progress, next=!->) !-> @update {progress}, next
 

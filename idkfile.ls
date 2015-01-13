@@ -12,7 +12,7 @@ exports import
 			keyword = job.data.keyword
 			# make google request to get sites from this keyword
 			# There's a 25% chance this fails
-			if _.chance 0.25 => return job.error 'Could not load google results, bad proxy'
+			if _.chance 0.9 => return job.error 'Could not load google results, bad proxy'
 
 			sites = ["#{keyword}site1.com", "#{keyword}site2.net", "#{keyword}site3.org"]
 			job.success sites
