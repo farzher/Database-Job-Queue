@@ -12,7 +12,7 @@ This project is unfinished, do not use it.
 	* [x] processing jobs
 * [x] Job data is kept, keep all your job history here and query it whenever
 * [ ] Processes jobs by
-	* [ ] node callbacks
+	* [x] node callbacks
 	* [x] using webhooks
 	* [ ] calling cli commands
 	* [ ] or polling
@@ -27,7 +27,7 @@ This project is unfinished, do not use it.
 * [x] cleanup hanging processing jobs
 
 ## Database
-	job
+	jobs
 		type: 'email'
 		data:
 			subject: 'hey'
@@ -41,12 +41,14 @@ This project is unfinished, do not use it.
 		delayTil: timestamp
 		batchId: batch._id
 		progress: 0
-		logs: []
-		result: result or reason failed
+		logs: [{t: timestamp, m: 'message'}]
+		result: where you can store job output
 		state: pending,active,fail,success,delay
 		onSuccessDelete: false
 
-	batch
+	batches
 		onComplete: job
 		isComplete: false
 
+	config
+		queues: {default: defaultQueueConfig}
