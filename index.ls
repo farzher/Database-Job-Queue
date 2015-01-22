@@ -5,11 +5,13 @@ do # Require
 	async = require 'async'
 	request = require 'request'
 	fs = require 'fs'
-	idkfile = try require './idkfile' catch => {}
+	Path = require 'path'
+	Url = require 'url'
 
 do # Globals
-	db = collection = config = null
-	defaultQueueSettings = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST', onSuccessDelete: false}
+	db = collection = dbConfig = null
+	queues = {}
+	defaultQueueConfig = {priority: 0, limit: 0, rateLimit: 0, rateInterval: 0, attempts: 1, backoff: 0, delay: 0, duration: 60*60, url: null, method: 'POST', onSuccessDelete: false}
 	jobValidation = {data: 'obj', type: 'str', priority: 'int', attempts: '+int', backoff: '', delay: 'int', duration: '+int', url: '', method: 'str', batchId: '_id', isOnComplete: 'bool', onSuccessDelete: 'bool'}
 
 class Job
@@ -58,38 +60,43 @@ class Job
 	checkBatchFinish: (next=!->) !->
 		err, count <~! collection.find {batchId: @model.batchId, state: {$nin: <[failed successful]>}} .count
 		if count is 0
-			err, batch <~! db.collection 'batch' .findAndModify {_id: @model.batchId}, {$set: {+isComplete}}, {+update}
+			err, batch <~! db.collection 'batches' .findAndModify {_id: @model.batchId}, {$set: {+isComplete}}, {+update}
 			if batch.onComplete and not batch.isComplete
 				createJob batch.onComplete import {batchId: batch._id, +isOnComplete}, next
 			else next!
 		else next!
-	success: (res, job) !->
-		console.log 'done success: ', res
+	success: (result, job) !->
+		console.log 'done success: ', result
 		<~! (next) !~>
 			updateData = {}
 			if @model.progress? => updateData.progress = 100
-			if res? => updateData.result = res
+			if result? => updateData.result = result
 			if not _.Obj.empty updateData => @update updateData, next else next!
 		err <~! @setState 'successful'
 		<~! (next) !~>
 			if job => createJob job, next else next!
 		if @option 'onSuccessDelete' => @delete!
 		@queue.processPendingJobs!
-	error: (res) !->
-		@log "Error: #{res}"; console.log 'done error: ', res
+	error: (msg) !->
+		m = 'Error'; if msg => m += ": #msg"
+		@log m; console.log 'done', m
 		err <~! @setState 'failed'
 		@queue.processPendingJobs!
-	retry: (res) !->
-		@log 'Retry'; console.log 'done retry: ', res
+	retry: (msg) !->
+		m = 'Retry'; if msg => m += ": #msg"
+		@log m; console.log 'done', m
 		@setState 'pending'
-	kill: (res) !->
-		@log 'Killed'; console.log 'done kill: ', res
+	kill: (msg) !->
+		m = 'Killed'; if msg => m += ": #msg"
+		@log m; console.log 'done', m
 		@setState 'killed'
-	delete: !-> collection.remove {_id: @model._id}
+	delete: !->
+		err <~! collection.remove {_id: @model._id}
+		if err => @log 'Delete Failed'
 	log: (message, next=!->) !-> collection.update {_id: @model._id}, {$push: {logs: {t:Date.now!, m:message}}}, next
 	progress: (progress, next=!->) !-> @update {progress}, next
 
-	# This is only here to expose createJob to idkfile
+	# This is only here to expose createJob to config file
 	create: createJob
 	getBatchJobs: (next) !->
 		err, docs <~! collection.find {batchId: @model.batchId, isOnComplete: {$ne: true}} .toArray
@@ -118,7 +125,7 @@ class Queue
 		# To get things started if there's jobs waiting when we start the server
 		@processPendingJobs!
 
-	updateConfig: (options) !-> @options = ({} import config.queues.default) import options
+	updateConfig: (options) !-> @options = ({} import dbConfig.queues.default) import options
 	processPendingJobs: !->
 		console.log 'processingCount:', @type, @processingCount
 
@@ -148,12 +155,13 @@ class Queue
 		@processPendingJobs!
 
 	process: (job) !->
-		if idkfile[job.option 'type'] => return that job
+		if configObject.process[job.option 'type'] => return that job
 
-		console.log 'pushing job to:', job.option 'url'
-		err, res, body <-! request {url: (job.option 'url'), method: (job.option 'method'), json: job.model}
+		url = job.option 'url'
+		console.log 'pushing job to:', url
+		err, res, body <-! request {url, method: (job.option 'method'), json: job.model}
 		console.log 'Done!'
-		return job.error err if err
+		return job.kill err if err
 		if res.statusCode is 200 => job.success body
 		else if res.statusCode is 202 => job.retry!
 		else if res.statusCode is 403 => job.kill!
@@ -162,16 +170,16 @@ class Queue
 
 
 
-# Get config, or create it if doesn't exist
-updateConfig = !->
-	err, _config <-! db.collection 'config' .findOne
-	config := _config
-	if not config?
-		config := {queues: default: defaultQueueSettings}
-		err, docs <-! db.collection 'config' .insert config
+# Get dbConfig, or create it if doesn't exist
+refreshDbConfig = !->
+	err, _dbConfig <-! db.collection 'config' .findOne
+	dbConfig := _dbConfig
+	if not dbConfig?
+		dbConfig := {queues: default: defaultQueueConfig}
+		err, docs <-! db.collection 'config' .insert dbConfig
 
-	# Push config into queues, or update existing queues
-	for k, v of config.queues => if queues[k]? => that.updateConfig v else queues[k] = new Queue k, v
+	# Push dbConfig into queues, or update existing queues
+	for k, v of dbConfig.queues => if queues[k]? => that.updateConfig v else queues[k] = new Queue k, v
 
 # Used to create a job, or batch of jobs, and check to process it instantly
 createJob = (obj, next=!->) !->
@@ -199,7 +207,7 @@ createJob = (obj, next=!->) !->
 		# If there is no batchId assigned, then create one
 		<-! (next) !->
 			if not batchId
-				err, docs <-! db.collection 'batch' .insert {onComplete}
+				err, docs <-! db.collection 'batches' .insert {onComplete}
 				batchId := docs.0._id
 				next!
 			else next!
@@ -213,25 +221,29 @@ createJob = (obj, next=!->) !->
 		next err
 
 do # Init
-	# TODO: use an actual command line library
-	args =
-		connect: process.argv.2 or 'mongodb://farzher:testing@kahana.mongohq.com:10017/queue'
-		port: process.argv.3 or 5672
-		promoteInterval: 5000
-	queues = {}
+	# Get config file path from first command line argument
+	configFile = process.argv.2
 
-	# Watch idkfile
-	# TODO: This is buggy and gets called twice, I should replace it later
-	fs.watch './idkfile.js', !->
-		delete require.cache[require.resolve './idkfile.js']
-		idkfile := try require './idkfile.js' catch => {}
+	# If file doesn't exist throw error
+	exists = fs.existsSync configFile
+	if not exists => throw 'Config file must exist'
+
+	# Require the config file as a module, if that fails throw the error
+	configFileAbsPath = Path.join process.cwd!, configFile
+	configObject = try require configFileAbsPath catch e => throw e
+
+	# Config validation / default config settings
+	if not configObject.connect => throw 'connect string is required in config file'
+	configObject.port ?= 5672
+	configObject.promoteInterval ?= 5000
+	configObject.process ?= {}
 
 	# DB
-	err, _db <-! MongoClient.connect args.connect
+	err, _db <-! MongoClient.connect configObject.connect
 	console.log 'Connected'
 	db := _db; collection := db.collection 'jobs'
 
-	updateConfig!
+	refreshDbConfig!
 
 	# Ensure index
 	<-! collection.ensureIndex {type: 1}
@@ -241,7 +253,7 @@ do # Init
 	<-! collection.ensureIndex {resetAt: 1}
 
 	# Promote delayed jobs, reset hanging jobs, recheck rate limited queues
-	setInterval _, args.promoteInterval <| !->
+	setInterval _, configObject.promoteInterval <| !->
 		processed = []
 		for , queue of queues when queue.options.rateLimit > 0 and queue.options.rateInterval > 0
 			processed.push queue.type
@@ -263,6 +275,6 @@ do # Init JSON API
 	router = express.Router!
 	router.all '/', (req, res) !-> res.send '//TODO: Single page UI that lets you see what jobs are currently running, and edit queue settings'
 	router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
-	router.all '/update-config', (req, res) !-> updateConfig!; res.send ''
+	router.all '/refresh-db-config', (req, res) !-> refreshDbConfig!; res.send ''
 	app.use '/', router
-	app.listen args.port
+	app.listen configObject.port
