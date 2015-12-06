@@ -5,7 +5,19 @@ exports import
 	connect: 'mongodb://farzher:testing@kahana.mongohq.com:10017/queue'
 	process:
 		default: (job) !->
+			if not job.data?type? => return job.kill 'unknown type'
+
 			switch job.data.type
+			| 'email'
+				t = job.data.to
+				s = job.data.subject
+				b = job.data.body
+
+				setTimeout !->
+					if _.chance 0.5 => return job.error 'email failed to send'
+					job.success "Email has been sent to: #t subject: #s body: #b"
+				, 5000
+
 			| 'getSitesFromKeywords'
 				jobs = for keyword in job.data.keywords
 					{data: {type: 'makeGoogleRequest', keyword}}
@@ -71,7 +83,7 @@ exports import
 					jobs.push {type: 'mx2', data: {domain, (job.data)campaign_id}}
 					jobs.push {type: 'cf', data: {domain, (job.data)campaign_id}}
 
-				job.success domains, {(job.model)batchId, jobs}
+				job.success domains, jobs
 
 		mx1: (job) !->
 			if _.chance 0.1 => return job.error 'Getting metrics failed'

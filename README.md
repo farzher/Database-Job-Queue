@@ -45,6 +45,8 @@ This project is unfinished, do not use it.
 		result: where you can store job output
 		state: pending,active,fail,success,delay
 		onSuccessDelete: false
+		onComplete: job
+		parentId: job
 
 	batches
 		onComplete: job

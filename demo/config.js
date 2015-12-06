@@ -5,12 +5,26 @@ request = require('request');
 exports.connect = 'mongodb://farzher:testing@kahana.mongohq.com:10017/queue';
 exports.process = {
   'default': function(job){
-    var jobs, res$, i$, ref$, len$, keyword, sites, queries, q, domains, domain;
+    var ref$, t, s, b, jobs, res$, i$, ref1$, len$, keyword, sites, queries, q, domains, domain;
+    if (((ref$ = job.data) != null ? ref$.type : void 8) == null) {
+      return job.kill('unknown type');
+    }
     switch (job.data.type) {
+    case 'email':
+      t = job.data.to;
+      s = job.data.subject;
+      b = job.data.body;
+      setTimeout(function(){
+        if (_.chance(0.5)) {
+          return job.error('email failed to send');
+        }
+        job.success("Email has been sent to: " + t + " subject: " + s + " body: " + b);
+      }, 5000);
+      break;
     case 'getSitesFromKeywords':
       res$ = [];
-      for (i$ = 0, len$ = (ref$ = job.data.keywords).length; i$ < len$; ++i$) {
-        keyword = ref$[i$];
+      for (i$ = 0, len$ = (ref1$ = job.data.keywords).length; i$ < len$; ++i$) {
+        keyword = ref1$[i$];
         res$.push({
           data: {
             type: 'makeGoogleRequest',
@@ -131,10 +145,7 @@ exports.process = {
           }
         });
       }
-      job.success(domains, {
-        batchId: job.model.batchId,
-        jobs: jobs
-      });
+      job.success(domains, jobs);
     }
   },
   mx1: function(job){

@@ -1,5 +1,5 @@
 {
-  "name": "db-job-queue",
+  "name": "delayed-job-queue",
   "version": "0.0.0",
   "description": "",
   "main": "index.js",
