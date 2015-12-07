@@ -1,4 +1,5 @@
-pre {outline: 1px solid #ccc; padding: 5px; margin: 5px; float:left;}
+pre {outline: 1px solid #ccc; padding: 5px; margin: 5px;}
+pre.info {float:left;}
 .string { color: green; }
 .number { color: darkorange; }
 .boolean { color: blue; }

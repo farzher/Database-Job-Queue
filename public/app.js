@@ -123,7 +123,9 @@ view = function(c){
         type: void 8
       });
     }
-  }, "Any")))), (function(){
+  }, "Any")))), m('br', {
+    style: 'clear:both'
+  }), (function(){
     var i$, ref$, len$, results$ = [];
     for (i$ = 0, len$ = (ref$ = c.jobs()).length; i$ < len$; ++i$) {
       job = ref$[i$];

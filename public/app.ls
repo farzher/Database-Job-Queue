@@ -65,7 +65,7 @@ view = (c) ->
         for let queue in c.info!queues
           m 'p' m 'a' {class:{active:queue is c.filter.where.type}, href:'#', onclick:-> c.changeWhere {type:queue}} "#queue"
         m 'p' m 'a' {class:{active:void is c.filter.where.type}, href:'#', onclick:-> c.changeWhere {type:void}} "Any"
-
+      m 'br' {style:'clear:both'}
 
       for job in c.jobs!
         m 'pre.job' m.trust syntaxHighlight JSON.stringify job, void, 1
