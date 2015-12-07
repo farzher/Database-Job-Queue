@@ -21,7 +21,7 @@ This project is unfinished, do not use it.
 * [x] Rate limit jobs
 	* [x] only process 5 at a time
 	* [x] only process 5 per minute
-* [ ] Job monitoring (logging, progress, when finished you can check the result, or reason failed)
+* [x] Job monitoring (logging, progress, when finished you can check the result, or reason failed)
 * [x] Batches????? (do something when all jobs in a batch are finished)
 * [x] When being processed, a job can either: succeed, fail, die (ignore remaining attempts), or retry (don't count current attempt as failed)
 * [x] cleanup hanging processing jobs
@@ -40,17 +40,16 @@ This project is unfinished, do not use it.
 		resetAt: timestamp
 		delayTil: timestamp
 		batchId: batch._id
+		parentId: job._id
 		progress: 0
 		logs: [{t: timestamp, m: 'message'}]
 		result: where you can store job output
-		state: pending,active,fail,success,delay
+		state: pending,processing,failed,success,delayed
 		onSuccessDelete: false
 		onComplete: job
-		parentId: job
 
 	batches
-		onComplete: job
-		isComplete: false
+		(currently only used to generate a batch id)
 
 	config
 		queues: {default: defaultQueueConfig}

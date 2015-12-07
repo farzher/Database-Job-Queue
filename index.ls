@@ -12,7 +12,7 @@ do # Globals
 	db = collection = dbConfig = null
 	queues = {}
 	defaultQueueConfig = {priority:0, limit:0, rateLimit:0, rateInterval:0, attempts:1, backoff:0, delay:0, duration:60*60, url:null, method:'POST', onSuccessDelete:false}
-	jobValidation = {data:'obj', type:'str', priority:'int', attempts:'+int', backoff:'', delay:'int', url:'', method:'str', batchId:'_id', parentId:'_id', isOnBatchComplete:'bool', onSuccessDelete:'bool', onComplete:'obj'}
+	jobValidation = {data:'obj', type:'str', priority:'int', attempts:'+int', backoff:'', delay:'int', url:'str', method:'str', batchId:'_id', parentId:'_id', isOnBatchComplete:'bool', onSuccessDelete:'bool', onComplete:'obj'}
 
 class Job
 	(@model={}) ->
@@ -112,12 +112,12 @@ class Job
 	# This is only here to expose createJob to config file
 	create:createJob
 	getBatchJobs:(next) !->
-		err, docs <~! collection.find {batchId:@model.batchId, isOnBatchComplete:{$ne:true}} .toArray
+		err, docs <~! (collection.find {batchId:@model.batchId, isOnBatchComplete:{$ne:true}})toArray
 		if err => return @systemError err
 		jobs = for data in docs => new Job data
 		next jobs
 	getParentJob:(next) !->
-		err, docs <~! collection.find {_id:@parentId} .toArray
+		err, docs <~! (collection.find {_id:@parentId})toArray
 		if err => return @systemError err
 		job = new Job docs.0
 		next job
@@ -132,8 +132,8 @@ Job.create = (model, next) !->
 	else if delay < 0
 		model.state = 'delayed'
 
-	# Remove undefined values before inserting
-	for k, v of model => if v is undefined => delete model[k]
+	# Remove void values before inserting
+	for k, v of model => if v is void => delete model[k]
 
 	console.log model
 	err, docs <-! collection.insert model
@@ -203,7 +203,7 @@ class Queue
 
 
 # Get dbConfig, or create it if doesn't exist
-refreshDbConfig = !->
+reloadDbConfig = !->
 	err, _dbConfig <-! db.collection 'config' .findOne
 	dbConfig := _dbConfig
 	if not dbConfig?
@@ -218,7 +218,7 @@ createJob = (obj, next=!->) !->
 	validateJobErr = !->
 		return "Job must be an object" if typeof! it isnt 'Object'
 		for k, v of it
-			if v is undefined => delete it[k]; continue
+			if v is void => delete it[k]; continue
 			validation = jobValidation[k]
 			return "Unknown job key `#k`" if not validation?
 
@@ -273,14 +273,14 @@ promoteJobs = !->
 		queue.processPendingJobs!
 
 	# Mark deplayed jobs as pending to start them
-	err, delayedDocs <-! collection.find {state:'delayed', delayTil:{$lte:Date.now!}}, {_id:true, type:true} .toArray
+	err, delayedDocs <-! (collection.find {state:'delayed', delayTil:{$lte:Date.now!}}, {_id:true, type:true})toArray
 	_ids = _.map (._id), delayedDocs
 	err <-! collection.update {_id:{$in:_ids}}, {$set:{state:'pending'}}, {multi:true}
 
 	# Throw errors on hanging jobs
 	# We recheck processing each failed job 1 by 1 in systemError because the processPendingJobs
 	# doesn't always pick them up because of async
-	err, hangingDocs <-! collection.find {state:'processing', resetAt:{$lte:Date.now!}} .toArray
+	err, hangingDocs <-! (collection.find {state:'processing', resetAt:{$lte:Date.now!}})toArray
 	for model in hangingDocs
 		job = new Job model
 		job.systemError 'Hanging job detected. Job is processing for too long'
@@ -313,7 +313,7 @@ do # Init
 	console.log 'Connected'
 	db := _db; collection := db.collection 'jobs'
 
-	refreshDbConfig!
+	reloadDbConfig!
 
 	# Ensure index
 	<-! collection.ensureIndex {type:1}
@@ -324,17 +324,34 @@ do # Init
 	<-! collection.ensureIndex {batchId:1}
 	<-! collection.ensureIndex {parentId:1}
 
-	setInterval promoteJobs, configObject.promoteInterval
-	promoteJobs!
+	if configObject.promoteInterval > 0
+		setInterval promoteJobs, configObject.promoteInterval
+		promoteJobs!
 
 do # Init JSON API
 	express = require 'express'
 	app = express!
 	bodyParser = require 'body-parser'
 	app.use bodyParser.json!
+	app.use express.static "#{process.cwd!}/public"
 	router = express.Router!
-	router.all '/', (req, res) !-> res.send '//TODO: Single page UI that lets you see what jobs are currently running, and edit queue settings'
 	router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
-	router.all '/refresh-db-config', (req, res) !-> refreshDbConfig!; res.send ''
+	router.all '/info', (req, res) !->
+		_where = req.body.where or {}
+		err, pending <-! (collection.find _where import {state:'pending'})count
+		err, processing <-! (collection.find _where import {state:'processing'})count
+		err, delayed <-! (collection.find _where import {state:'delayed'})count
+		err, success <-! (collection.find _where import {state:'success'})count
+		err, failed <-! (collection.find _where import {state:'failed'})count
+		res.send do
+			counts:{pending, processing, delayed, success, failed}
+			queues:_.keys queues
+	router.all '/view', (req, res) !->
+		err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray
+		for doc in docs
+			doc.timestamp = doc._id.getTimestamp!getTime!
+			delete doc._id
+		res.send docs
+	router.all '/reload-db-config', (req, res) !-> reloadDbConfig!; res.send ''
 	app.use '/', router
 	app.listen configObject.port
