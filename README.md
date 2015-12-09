@@ -1,5 +1,14 @@
 ### Job Queue Experiment
-This project is unfinished, do not use it.
+This project is unfinished, do not use it
+It's similar to something like RabbitMQ, but a lot more *powerful*
+This is for *LOW BANDWIDTH & IMPORTANT jobs*
+This is *not for sending emails*
+This *is for* dealing with complex multi-stage jobs with *high failure* chance
+*Logging* is supported well, so you can tell exactly what happened if things go wrong
+You can attach *arbitrary information* to jobs, like a user_id, to keep track of who's doing what without cluttering your main database
+
+## Example Usage
+TODO
 
 ## Features
 * [x] Delayed jobs
@@ -44,7 +53,7 @@ This project is unfinished, do not use it.
 		progress: 0
 		logs: [{t: timestamp, m: 'message'}]
 		result: where you can store job output
-		state: pending,processing,failed,success,delayed
+		state: pending,processing,failed,success,delayed,killed
 		onSuccessDelete: false
 		onComplete: job
 

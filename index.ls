@@ -136,9 +136,9 @@ Job.create = (model, next) !->
   for k, v of model => if v is void => delete model[k]
 
   console.log model
-  err, docs <-! collection.insert model
+  err, r <-! collection.insertOne model
   console.log 'inserted new job to:', model.type
-  job = new Job docs.0
+  job = new Job r.ops.0
   next err, job
 
 class Queue
@@ -168,7 +168,8 @@ class Queue
 
     # Get pending job while refreshing its resetAt time. Duration cannot be a job level setting because of this
     resetAt = Date.now! + (@options.duration or 0) * 1000
-    err, doc <~! collection.findAndModify {type:@type, state:'pending'}, [['priority', 'desc']], {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, {new:true}
+    err, r <~! collection.findOneAndUpdate {type:@type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, {sort:[['priority', 'desc']], -returnOriginal}
+    doc = r.value
     job = (if doc => new Job doc else null)
 
     # We didn't find anything, get out of here
@@ -204,11 +205,11 @@ class Queue
 
 # Get dbConfig, or create it if doesn't exist
 reloadDbConfig = !->
-  err, _dbConfig <-! db.collection 'config' .findOne
+  err, _dbConfig <-! ((db.collection 'config')find!limit 1)next
   dbConfig := _dbConfig
   if not dbConfig?
     dbConfig := {queues:{default:defaultQueueConfig}}
-    err, docs <-! db.collection 'config' .insert dbConfig
+    err, r <-! db.collection 'config' .insertOne dbConfig
 
   # Push dbConfig into queues, or update existing queues
   for k, v of dbConfig.queues => if queues[k]? => that.updateConfig v else queues[k] = new Queue k, v
@@ -251,8 +252,8 @@ createJob = (obj, next=!->) !->
     # If there is no batchId assigned, then create one
     <-! (next) !->
       if not batchId
-        err, docs <-! db.collection 'batches' .insert {}
-        batchId := docs.0._id
+        err, r <-! db.collection 'batches' .insertOne {}
+        batchId := r.insertedId
         next!
       else next!
     err <-! async.each jobs, (model, next) !-> Job.create (model import {batchId, obj.parentId}), next
@@ -275,7 +276,7 @@ promoteJobs = !->
   # Mark deplayed jobs as pending to start them
   err, delayedDocs <-! (collection.find {state:'delayed', delayTil:{$lte:Date.now!}}, {_id:true, type:true})toArray
   _ids = _.map (._id), delayedDocs
-  err <-! collection.update {_id:{$in:_ids}}, {$set:{state:'pending'}}, {multi:true}
+  err <-! collection.updateMany {_id:{$in:_ids}}, {$set:{state:'pending'}}
 
   # Throw errors on hanging jobs
   # We recheck processing each failed job 1 by 1 in systemError because the processPendingJobs
@@ -316,13 +317,7 @@ do # Init
   reloadDbConfig!
 
   # Ensure index
-  <-! collection.ensureIndex {type:1}
-  <-! collection.ensureIndex {state:1}
-  <-! collection.ensureIndex {priority:1}
-  <-! collection.ensureIndex {delayTil:1}
-  <-! collection.ensureIndex {resetAt:1}
-  <-! collection.ensureIndex {batchId:1}
-  <-! collection.ensureIndex {parentId:1}
+  <-! collection.createIndexes [{key:{type:1}}, {key:{state:1}}, {key:{priority:1}}, {key:{delayTil:1}}, {key:{resetAt:1}}, {key:{batchId:1}}, {key:{parentId:1}}]
 
   if configObject.promoteInterval > 0
     setInterval promoteJobs, configObject.promoteInterval
@@ -336,6 +331,11 @@ do # Init JSON API
   app.use express.static "#{process.cwd!}/public"
   router = express.Router!
   router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
+  router.all '/job/update', (req, res) !->
+    err, model <-! ((collection.find {_id:mongodb.ObjectID req.body._id})limit 1)next
+    job = new Job model
+    if req.body.progress => job.progress that
+    res.send ''
   router.all '/info', (req, res) !->
     _where = req.body.where or {}
     err, pending <-! (collection.find _where import {state:'pending'})count
@@ -343,8 +343,9 @@ do # Init JSON API
     err, delayed <-! (collection.find _where import {state:'delayed'})count
     err, success <-! (collection.find _where import {state:'success'})count
     err, failed <-! (collection.find _where import {state:'failed'})count
+    err, killed <-! (collection.find _where import {state:'killed'})count
     res.send do
-      counts:{pending, processing, delayed, success, failed}
+      counts:{pending, processing, delayed, success, failed, killed}
       queues:_.keys queues
   router.all '/view', (req, res) !->
     err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray

@@ -307,10 +307,10 @@ Job.create = function(model, next){
     }
   }
   console.log(model);
-  collection.insert(model, function(err, docs){
+  collection.insertOne(model, function(err, r){
     var job;
     console.log('inserted new job to:', model.type);
-    job = new Job(docs[0]);
+    job = new Job(r.ops[0]);
     next(err, job);
   });
 };
@@ -356,19 +356,21 @@ Queue = (function(){
     })(function(){
       var resetAt;
       resetAt = Date.now() + (this$.options.duration || 0) * 1000;
-      collection.findAndModify({
+      collection.findOneAndUpdate({
         type: this$.type,
         state: 'pending'
-      }, [['priority', 'desc']], {
+      }, {
         $set: {
           state: 'processing',
           lastProcessed: Date.now(),
           resetAt: resetAt
         }
       }, {
-        'new': true
-      }, function(err, doc){
-        var job;
+        sort: [['priority', 'desc']],
+        returnOriginal: false
+      }, function(err, r){
+        var doc, job;
+        doc = r.value;
         job = doc ? new Job(doc) : null;
         if (!job) {
           return this$.processingCount -= 1;
@@ -415,7 +417,7 @@ Queue = (function(){
   return Queue;
 }());
 reloadDbConfig = function(){
-  db.collection('config').findOne(function(err, _dbConfig){
+  db.collection('config').find().limit(1).next(function(err, _dbConfig){
     var k, ref$, v, that;
     dbConfig = _dbConfig;
     if (dbConfig == null) {
@@ -424,7 +426,7 @@ reloadDbConfig = function(){
           'default': defaultQueueConfig
         }
       };
-      db.collection('config').insert(dbConfig, function(err, docs){});
+      db.collection('config').insertOne(dbConfig, function(err, r){});
     }
     for (k in ref$ = dbConfig.queues) {
       v = ref$[k];
@@ -523,8 +525,8 @@ createJob = function(obj, next){
     }
     (function(next){
       if (!batchId) {
-        db.collection('batches').insert({}, function(err, docs){
-          batchId = docs[0]._id;
+        db.collection('batches').insertOne({}, function(err, r){
+          batchId = r.insertedId;
           next();
         });
       } else {
@@ -586,7 +588,7 @@ promoteJobs = function(){
     _ids = _.map(function(it){
       return it._id;
     }, delayedDocs);
-    collection.update({
+    collection.updateMany({
       _id: {
         $in: _ids
       }
@@ -594,8 +596,6 @@ promoteJobs = function(){
       $set: {
         state: 'pending'
       }
-    }, {
-      multi: true
     }, function(err){
       collection.find({
         state: 'processing',
@@ -654,37 +654,41 @@ MongoClient.connect(configObject.connect, function(err, _db){
   db = _db;
   collection = db.collection('jobs');
   reloadDbConfig();
-  collection.ensureIndex({
-    type: 1
-  }, function(){
-    collection.ensureIndex({
-      state: 1
-    }, function(){
-      collection.ensureIndex({
+  collection.createIndexes([
+    {
+      key: {
+        type: 1
+      }
+    }, {
+      key: {
+        state: 1
+      }
+    }, {
+      key: {
         priority: 1
-      }, function(){
-        collection.ensureIndex({
-          delayTil: 1
-        }, function(){
-          collection.ensureIndex({
-            resetAt: 1
-          }, function(){
-            collection.ensureIndex({
-              batchId: 1
-            }, function(){
-              collection.ensureIndex({
-                parentId: 1
-              }, function(){
-                if (configObject.promoteInterval > 0) {
-                  setInterval(promoteJobs, configObject.promoteInterval);
-                  promoteJobs();
-                }
-              });
-            });
-          });
-        });
-      });
-    });
+      }
+    }, {
+      key: {
+        delayTil: 1
+      }
+    }, {
+      key: {
+        resetAt: 1
+      }
+    }, {
+      key: {
+        batchId: 1
+      }
+    }, {
+      key: {
+        parentId: 1
+      }
+    }
+  ], function(){
+    if (configObject.promoteInterval > 0) {
+      setInterval(promoteJobs, configObject.promoteInterval);
+      promoteJobs();
+    }
   });
 });
 express = require('express');
@@ -699,6 +703,18 @@ router.all('/job', function(req, res){
     res.send(err);
   });
 });
+router.all('/job/update', function(req, res){
+  collection.find({
+    _id: mongodb.ObjectID(req.body._id)
+  }).limit(1).next(function(err, model){
+    var job, that;
+    job = new Job(model);
+    if (that = req.body.progress) {
+      job.progress(that);
+    }
+    res.send('');
+  });
+});
 router.all('/info', function(req, res){
   var _where;
   _where = req.body.where || {};
@@ -707,15 +723,18 @@ router.all('/info', function(req, res){
       collection.find((_where.state = 'delayed', _where)).count(function(err, delayed){
         collection.find((_where.state = 'success', _where)).count(function(err, success){
           collection.find((_where.state = 'failed', _where)).count(function(err, failed){
-            res.send({
-              counts: {
-                pending: pending,
-                processing: processing,
-                delayed: delayed,
-                success: success,
-                failed: failed
-              },
-              queues: _.keys(queues)
+            collection.find((_where.state = 'killed', _where)).count(function(err, killed){
+              res.send({
+                counts: {
+                  pending: pending,
+                  processing: processing,
+                  delayed: delayed,
+                  success: success,
+                  failed: failed,
+                  killed: killed
+                },
+                queues: _.keys(queues)
+              });
             });
           });
         });
