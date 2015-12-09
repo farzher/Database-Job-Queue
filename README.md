@@ -1,11 +1,11 @@
 ### Job Queue Experiment
-This project is unfinished, do not use it
-It's similar to something like RabbitMQ, but a lot more *powerful*
-This is for *LOW BANDWIDTH & IMPORTANT jobs*
-This is *not for sending emails*
-This *is for* dealing with complex multi-stage jobs with *high failure* chance
-*Logging* is supported well, so you can tell exactly what happened if things go wrong
-You can attach *arbitrary information* to jobs, like a user_id, to keep track of who's doing what without cluttering your main database
+This project is unfinished, do not use it.
+It's similar to something like RabbitMQ, but a lot more **powerful**.
+This is for **LOW BANDWIDTH & IMPORTANT jobs**.
+This is **not for sending emails**.
+This **is for** dealing with complex multi-stage jobs with **high failure** chance.
+**Logging** is supported well, so you can tell exactly what happened if things go wrong.
+You can attach **arbitrary information** to jobs, like a user_id, to keep track of who's doing what without cluttering your main database.
 
 ## Example Usage
 TODO
