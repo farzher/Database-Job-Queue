@@ -33,8 +33,6 @@ init_isotope = (ele) !->
   #     columnWidth: 1
 
 controller = !->
-  @jobs = m.prop []
-  @info = m.prop {}
   @filter = eval "(#{m.route.param 'filter'})"
 
   @reload = !~>

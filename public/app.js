@@ -26,8 +26,6 @@ function syntaxHighlight(json) {
 init_isotope = function(ele){};
 controller = function(){
   var this$ = this;
-  this.jobs = m.prop([]);
-  this.info = m.prop({});
   this.filter = eval("(" + m.route.param('filter') + ")");
   this.reload = function(){
     this$.info = m.request.post('/info', {
