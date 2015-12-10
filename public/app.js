@@ -25,13 +25,27 @@ function syntaxHighlight(json) {
 
 init_isotope = function(ele){};
 controller = function(){
-  var this$ = this;
-  this.filter = eval("(" + m.route.param('filter') + ")");
+  var e, this$ = this;
+  this.info = m.prop({
+    counts: {},
+    queues: []
+  });
+  this.jobs = m.prop([]);
+  this.filter = (function(){
+    try {
+      return eval("(" + m.route.param('filter') + ")");
+    } catch (e$) {
+      e = e$;
+      return {
+        where: {}
+      };
+    }
+  }());
   this.reload = function(){
-    this$.info = m.request.post('/info', {
+    m.request.post('/info', {
       data: this$.filter
-    });
-    this$.jobs = m.request.post('/view', {
+    }).then(this$.info);
+    m.request.post('/view', {
       data: this$.filter
     }).then(function(it){
       var i$, len$, job, j$, ref$, len1$, log;
@@ -45,7 +59,7 @@ controller = function(){
           }
         }
       }
-      return it;
+      this$.jobs(it);
     });
   };
   this.reload();

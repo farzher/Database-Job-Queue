@@ -323,36 +323,36 @@ do # Init
     setInterval promoteJobs, configObject.promoteInterval
     promoteJobs!
 
-do # Init JSON API
-  express = require 'express'
-  app = express!
-  bodyParser = require 'body-parser'
-  app.use bodyParser.json!
-  app.use express.static "#{process.cwd!}/public"
-  router = express.Router!
-  router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
-  router.all '/job/update', (req, res) !->
-    err, model <-! ((collection.find {_id:mongodb.ObjectID req.body._id})limit 1)next
-    job = new Job model
-    if req.body.progress => job.progress that
-    res.send ''
-  router.all '/info', (req, res) !->
-    _where = req.body.where or {}
-    err, pending <-! (collection.find _where import {state:'pending'})count
-    err, processing <-! (collection.find _where import {state:'processing'})count
-    err, delayed <-! (collection.find _where import {state:'delayed'})count
-    err, success <-! (collection.find _where import {state:'success'})count
-    err, failed <-! (collection.find _where import {state:'failed'})count
-    err, killed <-! (collection.find _where import {state:'killed'})count
-    res.send do
-      counts:{pending, processing, delayed, success, failed, killed}
-      queues:_.keys queues
-  router.all '/view', (req, res) !->
-    err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray
-    for doc in docs
-      doc.timestamp = doc._id.getTimestamp!getTime!
-      delete doc._id
-    res.send docs
-  router.all '/reload-db-config', (req, res) !-> reloadDbConfig!; res.send ''
-  app.use '/', router
-  app.listen configObject.port
+  do # Init JSON API
+    express = require 'express'
+    app = express!
+    bodyParser = require 'body-parser'
+    app.use bodyParser.json!
+    app.use express.static "#{process.cwd!}/public"
+    router = express.Router!
+    router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
+    router.all '/job/update', (req, res) !->
+      err, model <-! ((collection.find {_id:mongodb.ObjectID req.body._id})limit 1)next
+      job = new Job model
+      if req.body.progress => job.progress that
+      res.send ''
+    router.all '/info', (req, res) !->
+      _where = req.body.where or {}
+      err, pending <-! (collection.find _where import {state:'pending'})count
+      err, processing <-! (collection.find _where import {state:'processing'})count
+      err, delayed <-! (collection.find _where import {state:'delayed'})count
+      err, success <-! (collection.find _where import {state:'success'})count
+      err, failed <-! (collection.find _where import {state:'failed'})count
+      err, killed <-! (collection.find _where import {state:'killed'})count
+      res.send do
+        counts:{pending, processing, delayed, success, failed, killed}
+        queues:_.keys queues
+    router.all '/view', (req, res) !->
+      err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray
+      for doc in docs
+        doc.timestamp = doc._id.getTimestamp!getTime!
+        delete doc._id
+      res.send docs
+    router.all '/reload-db-config', (req, res) !-> reloadDbConfig!; res.send ''
+    app.use '/', router
+    app.listen configObject.port

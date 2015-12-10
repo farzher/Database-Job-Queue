@@ -22,9 +22,6 @@ function syntaxHighlight(json) {
 }
 ``
 
-
-
-
 init_isotope = (ele) !->
   # $(ele).isotope do
   #   # layoutMode: 'vertical'
@@ -33,16 +30,19 @@ init_isotope = (ele) !->
   #     columnWidth: 1
 
 controller = !->
-  @filter = eval "(#{m.route.param 'filter'})"
+  @info = m.prop {counts:{}, queues:[]}
+  @jobs = m.prop []
+
+  @filter = try eval "(#{m.route.param 'filter'})" catch => {where:{}}
 
   @reload = !~>
-    @info = m.request.post '/info', {data:@filter}
-    @jobs = m.request.post '/view', {data:@filter} .then !->
+    (m.request.post '/info', {data:@filter}).then @info
+    m.request.post '/view', {data:@filter} .then !~>
       for job in it
         job.timestamp = (moment job.timestamp)fromNow!
         if job.logs => for log in job.logs
           log.t = (moment log.t)fromNow!
-      return it
+      @jobs it
   @reload!
   @interval = setInterval @reload, 1000
   @onunload = !~> clearInterval @interval
