@@ -329,6 +329,7 @@ do # Init
     bodyParser = require 'body-parser'
     app.use bodyParser.json!
     app.use express.static "#{process.cwd!}/public"
+    app.use (req, res, next) !-> res.setHeader 'Access-Control-Allow-Origin', '*'; next!
     router = express.Router!
     router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
     router.all '/job/update', (req, res) !->

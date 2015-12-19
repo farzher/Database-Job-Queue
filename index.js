@@ -695,6 +695,10 @@ MongoClient.connect(configObject.connect, function(err, _db){
     bodyParser = require('body-parser');
     app.use(bodyParser.json());
     app.use(express['static'](process.cwd() + "/public"));
+    app.use(function(req, res, next){
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      next();
+    });
     router = express.Router();
     router.all('/job', function(req, res){
       createJob(req.body, function(err){
