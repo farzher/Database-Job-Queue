@@ -454,7 +454,7 @@ createJob = function(obj, next){
       }
       validation = jobValidation[k];
       if (validation == null) {
-        return "Unknown job key `" + k + "`";
+        continue;
       }
       if (validation === '_id' && toString$.call(v).slice(8, -1) === 'String') {
         it[k] = v = mongodb.ObjectID(v);
@@ -700,13 +700,13 @@ MongoClient.connect(configObject.connect, function(err, _db){
       next();
     });
     router = express.Router();
-    router.all('/job', function(req, res){
+    router.post('/job', function(req, res){
       createJob(req.body, function(err){
         res.status(err ? 500 : 200);
         res.send(err);
       });
     });
-    router.all('/job/update', function(req, res){
+    router.post('/job/update', function(req, res){
       collection.find({
         _id: mongodb.ObjectID(req.body._id)
       }).limit(1).next(function(err, model){
@@ -718,7 +718,7 @@ MongoClient.connect(configObject.connect, function(err, _db){
         res.send('');
       });
     });
-    router.all('/info', function(req, res){
+    router.post('/info', function(req, res){
       var _where;
       _where = req.body.where || {};
       collection.find((_where.state = 'pending', _where)).count(function(err, pending){
@@ -745,7 +745,7 @@ MongoClient.connect(configObject.connect, function(err, _db){
         });
       });
     });
-    router.all('/view', function(req, res){
+    router.post('/view', function(req, res){
       collection.find(req.body.where, import$({
         limit: 100,
         fields: {
@@ -768,11 +768,11 @@ MongoClient.connect(configObject.connect, function(err, _db){
         res.send(docs);
       });
     });
-    router.all('/reload-db-config', function(req, res){
+    router.post('/reload-db-config', function(req, res){
       reloadDbConfig();
       res.send('');
     });
-    app.use('/', router);
+    app.use(router);
     app.listen(configObject.port);
   });
 });

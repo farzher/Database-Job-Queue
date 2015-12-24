@@ -1,0 +1,17 @@
+#app
+  pre.info
+    p(v-for="(state, count) in info.counts")
+      a(:class="{active:state==filter.where.state}" href="#" @click.prevent="changeWhere({state:state})") {{state}}: {{count}}
+    p: a(:class="{active:undefined==filter.where.state}" href="#" @click.prevent="changeWhere({state:undefined})") Any
+
+  pre.info
+    p(v-for="queue in info.queues")
+      a(:class="{active:queue==filter.where.type}" href="#" @click.prevent="changeWhere({type:queue})") {{queue}}
+    p: a(:class="{active:undefined==filter.where.type}" href="#" @click.prevent="changeWhere({type:undefined})") Any
+
+  br(style="clear:both")
+
+  pre.job(v-for="job in jobs" track-by="$index") {{{syntaxHighlight(job)}}}
+
+
+script(src="/build.js")

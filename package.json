@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "webpack -w --progress --profile --colors",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -17,5 +18,18 @@
     "prelude-ls-extended": "*",
     "redis": "^2.4.2",
     "request": "^2.67.0"
+  },
+  "devDependencies": {
+    "css-loader": "^0.23.0",
+    "director": "^1.2.8",
+    "isotope": "^0.6.5",
+    "jquery": "^2.1.4",
+    "moment": "^2.10.6",
+    "page": "^1.6.4",
+    "style-loader": "^0.13.0",
+    "superagent": "^1.6.1",
+    "vue": "^1.0.12",
+    "vue-resource": "^0.1.17",
+    "vue-router": "^0.7.7"
   }
 }

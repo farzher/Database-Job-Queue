@@ -1,71 +1,46 @@
-``
-function syntaxHighlight(json) {
-    if (typeof json != 'string') {
-         json = JSON.stringify(json, undefined, 2);
-    }
-    json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-        var cls = 'number';
-        if (/^"/.test(match)) {
-            if (/:$/.test(match)) {
-                cls = 'key';
-            } else {
-                cls = 'string';
-            }
-        } else if (/true|false/.test(match)) {
-            cls = 'boolean';
-        } else if (/null/.test(match)) {
-            cls = 'null';
-        }
-        return '<span class="' + cls + '">' + match + '</span>';
-    });
-}
-``
+Vue = require 'vue'
+Vue.config.debug = true
+Request = require 'superagent'
+_ = require 'prelude-ls-extended'
+a = _.a
+Moment = require 'moment'
+Page = require 'page'
+# $ = require 'jquery'
+require './app.css'
 
-init_isotope = (ele) !->
-  # $(ele).isotope do
-  #   # layoutMode: 'vertical'
-  #   itemSelector: 'pre'
-  #   masonry:
-  #     columnWidth: 1
+``function syntaxHighlight(e){return"string"!=typeof e&&(e=JSON.stringify(e,void 0,2)),e=e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),e.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,function(e){var t="number";return/^"/.test(e)?t=/:$/.test(e)?"key":"string":/true|false/.test(e)?t="boolean":/null/.test(e)&&(t="null"),'<span class="'+t+'">'+e+"</span>"})}``
 
-controller = !->
-  @info = m.prop {counts:{}, queues:[]}
-  @jobs = m.prop []
 
-  @filter = try eval "(#{m.route.param 'filter'})" catch => {where:{}}
 
-  @reload = !~>
-    (m.request.post '/info', {data:@filter}).then @info
-    m.request.post '/view', {data:@filter} .then !~>
-      for job in it
-        job.timestamp = (moment job.timestamp)fromNow!
-        if job.logs => for log in job.logs
-          log.t = (moment log.t)fromNow!
-      @jobs it
-  @reload!
-  @interval = setInterval @reload, 1000
-  @onunload = !~> clearInterval @interval
+window.app = new Vue do
+  el:'#app'
+  data:
+    info:{counts:{}, queues:[]}
+    jobs:[]
+    filter:{where:{state:void, type:void}}
+  ready:!->
+    @reload!; setInterval @reload, 2000
+  methods:
+    syntaxHighlight:-> syntaxHighlight (if typeof! it is 'Object' => JSON.stringify it, void, 1 else it)
+    changeWhere:(_where)!->
+      @filter.where import _where
+      Page "/#{JSON.stringify @filter}"
+    reload:!->
+      (Request.post '/info', @filter)end (err, res)!-> app.info = res.body
+      (Request.post '/view', @filter)end (err, res)!->
+        for job in res.body
+          job.timestamp = (Moment job.timestamp)fromNow!
+          if job.logs => for log in job.logs
+            log.t = (Moment log.t)fromNow!
+        app.jobs = res.body
 
-  @changeWhere = (_where) !~>
-    @filter.where import _where
-    m.route "/#{JSON.stringify @filter}"
-    return false
-
-view = (c) ->
-  a do
-    m 'div' {init:init_isotope} a do
-      m 'pre.info' a do
-        for let state, count of c.info!counts
-          m 'p' m 'a' {class:{active:state is c.filter.where.state}, href:'#', onclick:-> c.changeWhere {state:state}} "#state: #count"
-        m 'p' m 'a' {class:{active:void is c.filter.where.state}, href:'#', onclick:-> c.changeWhere {state:void}} "Any"
-      m 'pre.info' a do
-        for let queue in c.info!queues
-          m 'p' m 'a' {class:{active:queue is c.filter.where.type}, href:'#', onclick:-> c.changeWhere {type:queue}} "#queue"
-        m 'p' m 'a' {class:{active:void is c.filter.where.type}, href:'#', onclick:-> c.changeWhere {type:void}} "Any"
-      m 'br' {style:'clear:both'}
-
-      for job in c.jobs!
-        m 'pre.job' m.trust syntaxHighlight JSON.stringify job, void, 1
-
-m.route (document.getElementById 'app'), '/{where:{state:"pending"}}', {'/:filter':{controller, view}}
+Page.base '/#'
+Page '/:filter', !->
+  try
+    filter = JSON.parse it.params.filter
+    return Page.redirect '/{"where":{}}' if not filter.where
+    app.filter = filter
+    app.reload!
+  catch => Page.redirect '/{"where":{}}'
+Page '*', !-> console.log it; Page.redirect '/{"where":{}}'
+Page!

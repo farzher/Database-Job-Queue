@@ -15,14 +15,14 @@ do # Globals
   jobValidation = {data:'obj', type:'str', priority:'int', attempts:'+int', backoff:'', delay:'int', url:'str', method:'str', batchId:'_id', parentId:'_id', isOnBatchComplete:'bool', onSuccessDelete:'bool', onComplete:'obj'}
 
 class Job
-  (@model={}) ->
+  (@model={})->
     @data = @model.data
     @queue = queues[@model.type]
 
   option:-> | @model[it]? => that | otherwise @queue.options[it]
-  update:(data, next) !-> @model import data; collection.update {_id:@model._id}, {$set:data}, next
+  update:(data, next)!-> @model import data; collection.update {_id:@model._id}, {$set:data}, next
 
-  setState:(state, next=!->) !->
+  setState:(state, next=!->)!->
     # If we're changing the state, we're finishing processing a job
     # Hanging job failure, then the job finishing can trigger this twice for 1 job
     if @model.state isnt state => @queue.processingCount -= 1
@@ -56,13 +56,13 @@ class Job
     err <~! @update (updateData import {state})
 
     # insert onComplete job if exists
-    <~! (next) !~>
+    <~! (next)!~>
       if @model.onComplete and state in <[killed failed success]>
         createJob (@model.onComplete import {batchId:@model.batchId, parentId:@model._id}), next
       else next!
 
     # check batch finish
-    <~! (next) !~>
+    <~! (next)!~>
       if @model.batchId and not @model.isOnBatchComplete and state in <[killed failed success]>
         @checkBatchFinish next
       else next!
@@ -71,58 +71,58 @@ class Job
 
     next err
 
-  checkBatchFinish:(next=!->) !->
+  checkBatchFinish:(next=!->)!->
     err, count <~! collection.find {batchId:@model.batchId, state:{$nin:<[killed failed success]>}, isOnBatchComplete:{$ne:true}} .count
     if count is 0
       err <-! collection.update {batchId:@model.batchId, +isOnBatchComplete}, {$set:{delayTil:Date.now!}}, {multi:true}
       promoteJobs!
       next!
     else next!
-  success:(result, job) !->
+  success:(result, job)!->
     console.log 'done success: ', result
-    <~! (next) !~>
+    <~! (next)!~>
       updateData = {}
       if @model.progress? => updateData.progress = 100
       if result? => updateData.result = result
       if not _.Obj.empty updateData => @update updateData, next else next!
-    <~! (next) !~>
+    <~! (next)!~>
       if job => createJob (job import {batchId:@model.batchId, parentId:@model._id}), next else next!
     err <~! @setState 'success'
     @queue.processPendingJobs!
-  error:(msg, o={+process}) !->
+  error:(msg, o={+process})!->
     m = 'Error'; if msg => m += ": #msg"
     @log m; console.log 'done', m
     err <~! @setState 'failed'
     if o.process => @queue.processPendingJobs!
-  systemError:(msg, o) !-> @error "SYSTEM ERROR: #msg", o
-  retry:(msg) !->
+  systemError:(msg, o)!-> @error "SYSTEM ERROR: #msg", o
+  retry:(msg)!->
     m = 'Retry'; if msg => m += ": #msg"
     @log m; console.log 'done', m
     @setState 'pending'
-  kill:(msg) !->
+  kill:(msg)!->
     m = 'Killed'; if msg => m += ": #msg"
     @log m; console.log 'done', m
     @setState 'killed'
   delete:!->
     err <~! collection.remove {_id:@model._id}
     if err => @log 'Delete Failed'
-  log:(message, next=!->) !-> collection.update {_id:@model._id}, {$push:{logs:{t:Date.now!, m:message}}}, next
-  progress:(progress, next=!->) !-> @update {progress}, next
+  log:(message, next=!->)!-> collection.update {_id:@model._id}, {$push:{logs:{t:Date.now!, m:message}}}, next
+  progress:(progress, next=!->)!-> @update {progress}, next
 
   # This is only here to expose createJob to config file
   create:createJob
-  getBatchJobs:(next) !->
+  getBatchJobs:(next)!->
     err, docs <~! (collection.find {batchId:@model.batchId, isOnBatchComplete:{$ne:true}})toArray
     if err => return @systemError err
     jobs = for data in docs => new Job data
     next jobs
-  getParentJob:(next) !->
+  getParentJob:(next)!->
     err, docs <~! (collection.find {_id:@parentId})toArray
     if err => return @systemError err
     job = new Job docs.0
     next job
 
-Job.create = (model, next) !->
+Job.create = (model, next)!->
   model.type ?= 'default'
   model.state = 'pending'
   delay = model.delay or queues[model.type]?options?delay or 0
@@ -142,13 +142,13 @@ Job.create = (model, next) !->
   next err, job
 
 class Queue
-  (@type, options={}) ->
+  (@type, options={})->
     @updateConfig options
     @processingCount = 0
     # To get things started if there's jobs waiting when we start the server
     @processPendingJobs!
 
-  updateConfig:(options) !-> @options = ({} import dbConfig.queues.default) import options
+  updateConfig:(options)!-> @options = ({} import dbConfig.queues.default) import options
   processPendingJobs:!->
     # Not sure if this is necessary
     if @processingCount < 0 => @processingCount = 0
@@ -160,7 +160,7 @@ class Queue
 
     # Rate limiting
     # TODO: This isn't atomic, should be part of the find & modify
-    <~! (next) !~>
+    <~! (next)!~>
       if @options.rateLimit > 0 and @options.rateInterval > 0
         err, count <~! collection.find {lastProcessed:{$gte:Date.now! - @options.rateInterval * 1000}} .count
         if count < @options.rateLimit => next! else return @processingCount -= 1
@@ -181,7 +181,7 @@ class Queue
     # Loop, looking for more jobs
     @processPendingJobs!
 
-  process:(job) !->
+  process:(job)!->
     url = job.option 'url'
     type = job.option 'type'
 
@@ -215,13 +215,13 @@ reloadDbConfig = !->
   for k, v of dbConfig.queues => if queues[k]? => that.updateConfig v else queues[k] = new Queue k, v
 
 # Used to create a job, or batch of jobs, and check to process it instantly
-createJob = (obj, next=!->) !->
+createJob = (obj, next=!->)!->
   validateJobErr = !->
     return "Job must be an object" if typeof! it isnt 'Object'
     for k, v of it
       if v is void => delete it[k]; continue
       validation = jobValidation[k]
-      return "Unknown job key `#k`" if not validation?
+      continue if not validation?
 
       # If it's supposed to be an _id but you're giving a string, try to turn it into an _id
       if validation is '_id' and typeof! v is 'String' => it[k] = v = mongodb.ObjectID v
@@ -250,13 +250,13 @@ createJob = (obj, next=!->) !->
     return next 'Array of jobs is empty' if _.empty jobs
     for job in jobs when validateJobErr job => console.log 'validateJobErr', that; return next that
     # If there is no batchId assigned, then create one
-    <-! (next) !->
+    <-! (next)!->
       if not batchId
         err, r <-! db.collection 'batches' .insertOne {}
         batchId := r.insertedId
         next!
       else next!
-    err <-! async.each jobs, (model, next) !-> Job.create (model import {batchId, obj.parentId}), next
+    err <-! async.each jobs, (model, next)!-> Job.create (model import {batchId, obj.parentId}), next
     for type in _.unique _.map (.type), jobs => queues[type]?processPendingJobs!
     next err
   else
@@ -329,15 +329,16 @@ do # Init
     bodyParser = require 'body-parser'
     app.use bodyParser.json!
     app.use express.static "#{process.cwd!}/public"
-    app.use (req, res, next) !-> res.setHeader 'Access-Control-Allow-Origin', '*'; next!
+    app.use (req, res, next)!-> res.setHeader 'Access-Control-Allow-Origin', '*'; next!
     router = express.Router!
-    router.all '/job', (req, res) !-> createJob req.body, (err) !-> res.status (if err => 500 else 200); res.send err
-    router.all '/job/update', (req, res) !->
+    # router.get '*', (req, res)!-> res.sendFile "#{process.cwd!}/public/index.html"
+    router.post '/job', (req, res)!-> createJob req.body, (err)!-> res.status (if err => 500 else 200); res.send err
+    router.post '/job/update', (req, res)!->
       err, model <-! ((collection.find {_id:mongodb.ObjectID req.body._id})limit 1)next
       job = new Job model
       if req.body.progress => job.progress that
       res.send ''
-    router.all '/info', (req, res) !->
+    router.post '/info', (req, res)!->
       _where = req.body.where or {}
       err, pending <-! (collection.find _where import {state:'pending'})count
       err, processing <-! (collection.find _where import {state:'processing'})count
@@ -348,12 +349,12 @@ do # Init
       res.send do
         counts:{pending, processing, delayed, success, failed, killed}
         queues:_.keys queues
-    router.all '/view', (req, res) !->
+    router.post '/view', (req, res)!->
       err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray
       for doc in docs
         doc.timestamp = doc._id.getTimestamp!getTime!
         delete doc._id
       res.send docs
-    router.all '/reload-db-config', (req, res) !-> reloadDbConfig!; res.send ''
-    app.use '/', router
+    router.post '/reload-db-config', (req, res)!-> reloadDbConfig!; res.send ''
+    app.use router
     app.listen configObject.port
