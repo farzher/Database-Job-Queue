@@ -49,12 +49,12 @@ Job = (function(){
     this.queue = queues[this.model.type];
   }
   prototype.option = function(it){
-    var that;
+    var that, ref$;
     switch (false) {
     case (that = this.model[it]) == null:
       return that;
     default:
-      return this.queue.options[it];
+      return (ref$ = this.queue) != null ? ref$.options[it] : void 8;
     }
   };
   prototype.update = function(data, next){
@@ -66,10 +66,12 @@ Job = (function(){
     }, next);
   };
   prototype.setState = function(state, next){
-    var updateData, backoff, backoffType, attempt, doc, backoffValue, e, this$ = this;
+    var ref$, updateData, backoff, backoffType, attempt, doc, backoffValue, e, this$ = this;
     next == null && (next = function(){});
     if (this.model.state !== state) {
-      this.queue.processingCount -= 1;
+      if ((ref$ = this.queue) != null) {
+        ref$.processingCount -= 1;
+      }
     }
     updateData = {};
     if (state === 'failed') {
@@ -178,7 +180,10 @@ Job = (function(){
         }
       })(function(){
         this$.setState('success', function(err){
-          this$.queue.processPendingJobs();
+          var ref$;
+          if ((ref$ = this$.queue) != null) {
+            ref$.processPendingJobs();
+          }
         });
       });
     });
@@ -193,10 +198,12 @@ Job = (function(){
       m += ": " + msg;
     }
     this.log(m);
-    console.log('done', m);
     this.setState('failed', function(err){
+      var ref$;
       if (o.process) {
-        this$.queue.processPendingJobs();
+        if ((ref$ = this$.queue) != null) {
+          ref$.processPendingJobs();
+        }
       }
     });
   };
@@ -210,7 +217,6 @@ Job = (function(){
       m += ": " + msg;
     }
     this.log(m);
-    console.log('done', m);
     this.setState('pending');
   };
   prototype.kill = function(msg){
@@ -220,7 +226,6 @@ Job = (function(){
       m += ": " + msg;
     }
     this.log(m);
-    console.log('done', m);
     this.setState('killed');
   };
   prototype['delete'] = function(){
@@ -233,15 +238,16 @@ Job = (function(){
       }
     });
   };
-  prototype.log = function(message, next){
+  prototype.log = function(msg, next){
     next == null && (next = function(){});
+    console.log('done', msg);
     collection.update({
       _id: this.model._id
     }, {
       $push: {
         logs: {
           t: Date.now(),
-          m: message
+          m: msg
         }
       }
     }, next);
@@ -355,7 +361,7 @@ Queue = (function(){
       }
     })(function(){
       var resetAt;
-      resetAt = Date.now() + (this$.options.duration || 0) * 1000;
+      resetAt = Date.now() + (this$.options.duration || defaultQueueConfigconf.duration) * 1000;
       collection.findOneAndUpdate({
         type: this$.type,
         state: 'pending'
@@ -543,7 +549,7 @@ createJob = function(obj, next){
             ref1$.processPendingJobs();
           }
         }
-        next(err);
+        next(err, batchId);
         function fn$(it){
           return it.type;
         }
@@ -561,7 +567,7 @@ createJob = function(obj, next){
           ref$.processPendingJobs();
         }
       }
-      next(err);
+      next(err, job.model._id);
     });
   }
 };
@@ -700,13 +706,13 @@ MongoClient.connect(configObject.connect, function(err, _db){
       next();
     });
     router = express.Router();
-    router.post('/job', function(req, res){
-      createJob(req.body, function(err){
+    router.all('/job/create', function(req, res){
+      createJob(req.body, function(err, _id){
         res.status(err ? 500 : 200);
-        res.send(err);
+        res.send(err || _id);
       });
     });
-    router.post('/job/update', function(req, res){
+    router.all('/job/update', function(req, res){
       collection.find({
         _id: mongodb.ObjectID(req.body._id)
       }).limit(1).next(function(err, model){
@@ -718,7 +724,51 @@ MongoClient.connect(configObject.connect, function(err, _db){
         res.send('');
       });
     });
-    router.post('/info', function(req, res){
+    router.all('/job/poll', function(req, res){
+      var queue, resetAt, ref$, this$ = this;
+      queue = queues[req.body.type];
+      resetAt = Date.now() + ((queue != null ? (ref$ = queue.options) != null ? ref$.duration : void 8 : void 8) || defaultQueueConfig.duration) * 1000;
+      collection.findOneAndUpdate({
+        type: req.body.type,
+        state: 'pending'
+      }, {
+        $set: {
+          state: 'processing',
+          lastProcessed: Date.now(),
+          resetAt: resetAt
+        }
+      }, {
+        sort: [['priority', 'desc']],
+        returnOriginal: false
+      }, function(err, r){
+        var doc;
+        doc = r.value;
+        res.send(doc);
+      });
+    });
+    router.all('/job/get', function(req, res){
+      collection.find(req.body.where, import$({
+        limit: 100,
+        fields: {
+          type: true,
+          state: true,
+          url: true,
+          data: true,
+          logs: true,
+          progress: true,
+          result: true
+        },
+        sort: [['_id', 'desc']]
+      }, req.body)).toArray(function(err, docs){
+        var i$, len$, doc;
+        for (i$ = 0, len$ = docs.length; i$ < len$; ++i$) {
+          doc = docs[i$];
+          doc.timestamp = doc._id.getTimestamp().getTime();
+        }
+        res.send(docs);
+      });
+    });
+    router.all('/info', function(req, res){
       var _where;
       _where = req.body.where || {};
       collection.find((_where.state = 'pending', _where)).count(function(err, pending){
@@ -745,35 +795,13 @@ MongoClient.connect(configObject.connect, function(err, _db){
         });
       });
     });
-    router.post('/view', function(req, res){
-      collection.find(req.body.where, import$({
-        limit: 100,
-        fields: {
-          type: true,
-          state: true,
-          url: true,
-          data: true,
-          logs: true,
-          progress: true,
-          result: true
-        },
-        sort: [['_id', 'desc']]
-      }, req.body)).toArray(function(err, docs){
-        var i$, len$, doc;
-        for (i$ = 0, len$ = docs.length; i$ < len$; ++i$) {
-          doc = docs[i$];
-          doc.timestamp = doc._id.getTimestamp().getTime();
-          delete doc._id;
-        }
-        res.send(docs);
-      });
-    });
-    router.post('/reload-db-config', function(req, res){
+    router.all('/reload-db-config', function(req, res){
       reloadDbConfig();
       res.send('');
     });
     app.use(router);
     app.listen(configObject.port);
+    console.log("Listening on port " + configObject.port);
   });
 });
 function import$(obj, src){

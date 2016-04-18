@@ -40,7 +40,7 @@ window.app = new Vue({
       Request.post('/info', this.filter).end(function(err, res){
         app.info = res.body;
       });
-      Request.post('/view', this.filter).end(function(err, res){
+      Request.post('/job/get', this.filter).end(function(err, res){
         var i$, ref$, len$, job, j$, ref1$, len1$, log;
         for (i$ = 0, len$ = (ref$ = res.body).length; i$ < len$; ++i$) {
           job = ref$[i$];

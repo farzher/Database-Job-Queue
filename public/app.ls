@@ -27,7 +27,7 @@ window.app = new Vue do
       Page "/#{JSON.stringify @filter}"
     reload:!->
       (Request.post '/info', @filter)end (err, res)!-> app.info = res.body
-      (Request.post '/view', @filter)end (err, res)!->
+      (Request.post '/job/get', @filter)end (err, res)!->
         for job in res.body
           job.timestamp = (Moment job.timestamp)fromNow!
           if job.logs => for log in job.logs

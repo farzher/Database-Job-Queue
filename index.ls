@@ -19,13 +19,13 @@ class Job
     @data = @model.data
     @queue = queues[@model.type]
 
-  option:-> | @model[it]? => that | otherwise @queue.options[it]
+  option:-> | @model[it]? => that | otherwise @queue?options[it]
   update:(data, next)!-> @model import data; collection.update {_id:@model._id}, {$set:data}, next
 
   setState:(state, next=!->)!->
     # If we're changing the state, we're finishing processing a job
     # Hanging job failure, then the job finishing can trigger this twice for 1 job
-    if @model.state isnt state => @queue.processingCount -= 1
+    if @model.state isnt state => @queue?processingCount -= 1
 
     updateData = {}
     if state is 'failed'
@@ -88,25 +88,27 @@ class Job
     <~! (next)!~>
       if job => createJob (job import {batchId:@model.batchId, parentId:@model._id}), next else next!
     err <~! @setState 'success'
-    @queue.processPendingJobs!
+    @queue?processPendingJobs!
   error:(msg, o={+process})!->
     m = 'Error'; if msg => m += ": #msg"
-    @log m; console.log 'done', m
+    @log m
     err <~! @setState 'failed'
-    if o.process => @queue.processPendingJobs!
+    if o.process => @queue?processPendingJobs!
   systemError:(msg, o)!-> @error "SYSTEM ERROR: #msg", o
   retry:(msg)!->
     m = 'Retry'; if msg => m += ": #msg"
-    @log m; console.log 'done', m
+    @log m
     @setState 'pending'
   kill:(msg)!->
     m = 'Killed'; if msg => m += ": #msg"
-    @log m; console.log 'done', m
+    @log m
     @setState 'killed'
   delete:!->
     err <~! collection.remove {_id:@model._id}
     if err => @log 'Delete Failed'
-  log:(message, next=!->)!-> collection.update {_id:@model._id}, {$push:{logs:{t:Date.now!, m:message}}}, next
+  log:(msg, next=!->)!->
+    console.log 'done', msg
+    collection.update {_id:@model._id}, {$push:{logs:{t:Date.now!, m:msg}}}, next
   progress:(progress, next=!->)!-> @update {progress}, next
 
   # This is only here to expose createJob to config file
@@ -167,7 +169,9 @@ class Queue
       else next!
 
     # Get pending job while refreshing its resetAt time. Duration cannot be a job level setting because of this
-    resetAt = Date.now! + (@options.duration or 0) * 1000
+    # Why was the default here 0?
+    # resetAt = Date.now! + (@options.duration or 0) * 1000
+    resetAt = Date.now! + (@options.duration or defaultQueueConfigconf.duration) * 1000
     err, r <~! collection.findOneAndUpdate {type:@type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, {sort:[['priority', 'desc']], -returnOriginal}
     doc = r.value
     job = (if doc => new Job doc else null)
@@ -258,12 +262,12 @@ createJob = (obj, next=!->)!->
       else next!
     err <-! async.each jobs, (model, next)!-> Job.create (model import {batchId, obj.parentId}), next
     for type in _.unique _.map (.type), jobs => queues[type]?processPendingJobs!
-    next err
+    next err, batchId
   else
     if validateJobErr obj => console.log 'validateJobErr', that; return next that
     err, job <-! Job.create obj
     if job.model.state is 'pending' => job.queue?processPendingJobs!
-    next err
+    next err, job.model._id
 
 # Promote delayed jobs, reset hanging jobs, recheck rate limited queues
 promoteJobs = !->
@@ -331,14 +335,38 @@ do # Init
     app.use express.static "#{process.cwd!}/public"
     app.use (req, res, next)!-> res.setHeader 'Access-Control-Allow-Origin', '*'; next!
     router = express.Router!
-    # router.get '*', (req, res)!-> res.sendFile "#{process.cwd!}/public/index.html"
-    router.post '/job', (req, res)!-> createJob req.body, (err)!-> res.status (if err => 500 else 200); res.send err
-    router.post '/job/update', (req, res)!->
+
+    # Create job
+    router.all '/job/create', (req, res)!->
+      createJob req.body, (err, _id)!->
+        res.status (if err => 500 else 200)
+        res.send err || _id
+
+    # Edit job
+    router.all '/job/update', (req, res)!->
       err, model <-! ((collection.find {_id:mongodb.ObjectID req.body._id})limit 1)next
       job = new Job model
       if req.body.progress => job.progress that
       res.send ''
-    router.post '/info', (req, res)!->
+
+    # Get free jobs to process by polling
+    router.all '/job/poll', (req, res)!->
+      queue = queues[req.body.type]
+      resetAt = Date.now! + (queue?options?duration or defaultQueueConfig.duration) * 1000
+      # collection.updateMany({type:req.body.type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, o, function(err, r) {
+      err, r <~! collection.findOneAndUpdate {type:req.body.type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, {sort:[['priority', 'desc']], -returnOriginal}
+      doc = r.value
+      res.send doc
+
+    # Get any matching jobs without locking them
+    router.all '/job/get', (req, res)!->
+      err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray
+      for doc in docs
+        doc.timestamp = doc._id.getTimestamp!getTime!
+      res.send docs
+
+    # Info about database
+    router.all '/info', (req, res)!->
       _where = req.body.where or {}
       err, pending <-! (collection.find _where import {state:'pending'})count
       err, processing <-! (collection.find _where import {state:'processing'})count
@@ -349,12 +377,10 @@ do # Init
       res.send do
         counts:{pending, processing, delayed, success, failed, killed}
         queues:_.keys queues
-    router.post '/view', (req, res)!->
-      err, docs <-! (collection.find req.body.where, {limit:100, fields:{+type, +state, +url, +data, +logs, +progress, +result}, sort:[['_id', 'desc']]} import req.body)toArray
-      for doc in docs
-        doc.timestamp = doc._id.getTimestamp!getTime!
-        delete doc._id
-      res.send docs
-    router.post '/reload-db-config', (req, res)!-> reloadDbConfig!; res.send ''
+
+    # Need to run this for some db queue chnges to take effect
+    router.all '/reload-db-config', (req, res)!-> reloadDbConfig!; res.send ''
+
     app.use router
     app.listen configObject.port
+    console.log "Listening on port #{configObject.port}"
