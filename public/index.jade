@@ -1,17 +1,73 @@
-#app
-  pre.info
-    p(v-for="(state, count) in info.counts")
-      a(:class="{active:state==filter.where.state}" href="#" @click.prevent="changeWhere({state:state})") {{state}}: {{count}}
-    p: a(:class="{active:undefined==filter.where.state}" href="#" @click.prevent="changeWhere({state:undefined})") Any
+#app.container-fluid
+  .row: .col-sm-12
+    h2 State
+    ul.nav.nav-pills
+      li.nav-item(v-for="(state, count) in info.counts")
+        a.nav-link(:class="{active:state==filter.where.state, 'text-muted':!count}" href="#" @click.prevent="changeWhere({state:state})") {{state}}: {{count}}
+      li.nav-item: a.nav-link(:class="{active:undefined==filter.where.state}" href="#" @click.prevent="changeWhere({state:undefined})") Any
 
-  pre.info
-    p(v-for="queue in info.queues")
-      a(:class="{active:queue==filter.where.type}" href="#" @click.prevent="changeWhere({type:queue})") {{queue}}
-    p: a(:class="{active:undefined==filter.where.type}" href="#" @click.prevent="changeWhere({type:undefined})") Any
+  .row: .col-sm-12
+    h2 Queue &nbsp;
+      .btn-group
+        a.btn.btn-secondary(:class="{disabled:isDbConfigDirty}" v-tip="Refresh Config" href="/reload-db-config" @click.prevent="ajax($event, {reload:true})"): i.fa.fa-refresh
+        a.btn.btn-secondary(v-tip="Edit Config" href="#" data-toggle="modal" data-target="#editconfig-modal"): i.fa.fa-pencil
+    ul.nav.nav-pills
+      li.nav-item(v-tip="dbConfig.queues[queue] | json" v-for="queue in info.queues")
+        a.nav-link(:class="{active:queue==filter.where.type}" href="#" @click.prevent="changeWhere({type:queue})") {{queue}}
+      li.nav-item
+        a.nav-link(:class="{active:undefined==filter.where.type}" href="#" @click.prevent="changeWhere({type:undefined})") Any
 
-  br(style="clear:both")
+  .row: .col-sm-12
+    h2 Jobs &nbsp;
+      .btn-group
+        a.btn.btn-secondary(v-tip="Create Job" href="#" data-toggle="modal" data-target="#createjob-modal"): i.fa.fa-plus
+    pre.job(v-for="job in jobs" track-by="$index") {{{syntaxHighlight(job)}}}
 
-  pre.job(v-for="job in jobs" track-by="$index") {{{syntaxHighlight(job)}}}
 
 
+
+
+  //- editconfig-modal
+  #editconfig-modal.modal.fade
+    .modal-dialog
+      .modal-content
+        .modal-header
+          h4 Edit DB Config
+        .modal-body
+          textarea(v-model="dbConfigRaw" style="width:100%;height:400px")
+        .modal-footer
+          button.btn.btn-primary(v-if="isDbConfigDirty" @click.prevent="saveDbConfig") #[i.fa.fa-save] Save Changes
+          button.btn.btn-secondary(v-if="isDbConfigDirty" @click.prevent="revertDbConfig") #[i.fa.fa-trash] Revert Changes
+          button.btn.btn-secondary(v-if="!isDbConfigDirty" data-dismiss="modal") #[i.fa.fa-close] Cancel
+
+
+
+  //- createjob-modal
+  #createjob-modal.modal.fade
+    .modal-dialog
+      .modal-content
+        .modal-header
+          h4 Create Job
+        .modal-body
+          textarea(v-model="createJobRaw" style="width:100%;height:400px")
+        .modal-footer
+          button.btn.btn-primary(@click.prevent="createJob") #[i.fa.fa-plus] Create
+          button.btn.btn-secondary(data-dismiss="modal") #[i.fa.fa-close] Cancel
+
+
+//- fontawesome
+link(rel="stylesheet" href="lib/font-awesome.min.css")
+
+//- jquery
+script(src="https://code.jquery.com/jquery-2.2.3.min.js")
+
+//- bootstrap 4
+link(rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.2/css/bootstrap.min.css")
+//- script(src="https://cdnjs.cloudflare.com/ajax/libs/tether/1.3.1/js/tether.min.js")
+script(src="lib/tether.js")
+script(src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.2/js/bootstrap.min.js")
+
+//- source
+link(rel="stylesheet" href="app.css")
 script(src="/build.js")
+script(src="/dev.js")

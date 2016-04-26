@@ -152,6 +152,10 @@ class Queue
 
   updateConfig:(options)!-> @options = ({} import dbConfig.queues.default) import options
   processPendingJobs:!->
+    if @stopped
+      delete queues[@type]
+      return
+
     # Not sure if this is necessary
     if @processingCount < 0 => @processingCount = 0
     console.log 'processingCount:', @type, @processingCount
@@ -171,7 +175,7 @@ class Queue
     # Get pending job while refreshing its resetAt time. Duration cannot be a job level setting because of this
     # Why was the default here 0?
     # resetAt = Date.now! + (@options.duration or 0) * 1000
-    resetAt = Date.now! + (@options.duration or defaultQueueConfigconf.duration) * 1000
+    resetAt = Date.now! + (@options.duration or queues.default.duration) * 1000
     err, r <~! collection.findOneAndUpdate {type:@type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, {sort:[['priority', 'desc']], -returnOriginal}
     doc = r.value
     job = (if doc => new Job doc else null)
@@ -202,7 +206,11 @@ class Queue
     else if configObject.process[type]
       console.log 'config process found:', type
       that job
-    else console.log 'no process defined for this job:', job
+    else
+      console.log 'no process defined for this job:', job
+      job.retry!
+      @stopped = true
+
 
 
 
@@ -346,13 +354,17 @@ do # Init
     router.all '/job/update', (req, res)!->
       err, model <-! ((collection.find {_id:mongodb.ObjectID req.body._id})limit 1)next
       job = new Job model
-      if req.body.progress => job.progress that
-      res.send ''
+      if not job
+        res.send ''
+      else
+        args = req.body.call
+        job[args.0].apply job, args[1 to]
+        res.send job.model._id
 
     # Get free jobs to process by polling
     router.all '/job/poll', (req, res)!->
       queue = queues[req.body.type]
-      resetAt = Date.now! + (queue?options?duration or defaultQueueConfig.duration) * 1000
+      resetAt = Date.now! + (queue?options?duration or queues.default.duration) * 1000
       # collection.updateMany({type:req.body.type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, o, function(err, r) {
       err, r <~! collection.findOneAndUpdate {type:req.body.type, state:'pending'}, {$set:{state:'processing', lastProcessed:Date.now!, resetAt}}, {sort:[['priority', 'desc']], -returnOriginal}
       doc = r.value
@@ -379,7 +391,15 @@ do # Init
         queues:_.keys queues
 
     # Need to run this for some db queue chnges to take effect
-    router.all '/reload-db-config', (req, res)!-> reloadDbConfig!; res.send ''
+    router.all '/reload-db-config', (req, res)!-> reloadDbConfig!; res.send dbConfig
+
+    router.all '/get-db-config', (req, res)!-> res.send dbConfig
+    router.all '/save-db-config', (req, res)!->
+      delete req.body._id
+      err, _dbConfig <-! ((db.collection 'config')find!limit 1)next
+      err <-! (db.collection 'config')update {_id:_dbConfig._id}, {$set:req.body}
+      reloadDbConfig!
+      res.send ''
 
     app.use router
     app.listen configObject.port
